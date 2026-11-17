@@ -50,8 +50,8 @@ def first(s: State) = s.g.mapC(_.toList.take(1))
 
 def group(s: State) = s.g.mapC(_.toList)
 def mem(s: State) = s.members.mapC(_.toList)
-def parentName(s: State, g: GroupDto): String = g.parentId.flatMap(p => s.groups.v.find(_.id == p)).map(_.name).getOrElse("")
-def children(s: State, g: GroupDto) = s.groups.mapC(_.filter(_.parentId.contains(g.id)))
+def parents(s: State, g: GroupDto) = s.groups.mapC(gs => g.parentIds.flatMap(p => gs.find(_.id == p)).sortBy(_.name))
+def children(s: State, g: GroupDto) = s.groups.mapC(_.filter(_.parentIds.contains(g.id)).sortBy(_.name))
 </script>
 
 <template>
@@ -64,7 +64,7 @@ def children(s: State, g: GroupDto) = s.groups.mapC(_.filter(_.parentId.contains
       </div>
       <div class="row small meta">
         <span v-if="g.isAdmin" class="badge accent">管理者のグループ</span>
-        <span v-if="g.parentId.isDefined">親: <RouterLink :to='"/admin/groups/" + g.parentId.get'>{{ parentName(s, g) }}</RouterLink></span>
+        <span v-for="pg in parents(s, g)">親: <RouterLink :to='"/admin/groups/" + pg.id'>{{ pg.name }}</RouterLink></span>
         <span v-if='g.source != "local"' class="badge">{{ g.source }} から同期</span>
         <span v-for="c in children(s, g)">子: <RouterLink :to='"/admin/groups/" + c.id'>{{ c.name }}</RouterLink></span>
       </div>

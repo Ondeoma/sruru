@@ -19,7 +19,7 @@ import java.util.UUID
 /** 管理 API（システム管理者のみ）. */
 final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionStore, tokens: TokenStore, apps: AppStore, fedStore: FederationStore,
     fed: FederationService, auditStore: AuditStore, keys: KeyService, me: MeRoutes, login: LoginService, claims: Claims,
-    policies: PolicyService, audit: AuditService, mail: MailService, box: SecretBox, settings: SettingsStore, val auth: SessionAuth, cfg: ApiConfig)
+    policies: PolicyService, audit: AuditService, mail: MailService, box: SecretBox, settings: SettingsStore, icons: SiteIcon, val auth: SessionAuth, cfg: ApiConfig)
     extends RouteSupport:
 
   private val MaxLogoBytes = 512 * 1024
@@ -149,6 +149,18 @@ final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionS
       _    <- pol.branding.logo.traverse_(l => scala.util.Try(UUID.fromString(l)).toEither.left.map(_ => "ロゴの指定が正しくありません"))
     yield (name, rule, Option.when(!pol.isEmpty)(pol))
 
+  /**
+   * 親グループの確認: すべて存在すること. 条件（動的なメンバー）を付けるグループは、管理者のグループの下に置けない
+   * （親のどれかが管理者なら、このグループのメンバーも管理者になるため. 条件で管理者が決まらないように）.
+   */
+  private def checkParents(parents: List[UUID], rule: Option[GroupRule]): IO[Either[String, Unit]] =
+    dir.groups.all.map { all =>
+      val byId = all.map(g => g.id -> g).toMap
+      parents.find(p => !byId.contains(p)).map(_ => "親のグループが見つかりません").toLeft(())
+        .flatMap(_ => Either.cond(rule.isEmpty || !Membership.expand(parents, byId).isAdmin, (),
+          "管理者のグループ（またはその子）の下には、条件でメンバーを決めるグループを置けません"))
+    }
+
   // ------------------------------------------------------------------ アプリケーション
 
   private def appDto(a: Application): IO[AppDto] =
@@ -231,9 +243,25 @@ final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionS
             case Left(e) => Res.fail(Fail.from(e))
             case Right(a) =>
               apps.setMappings(id, mappingsOf(id, r)) *> apps.setAccessGroups(id, r.accessGroups) *>
-                audit.byPrincipal(c, p, "app.create", audit.appTarget(a)) *> appDto(a).map(d => Right(AppCreatedDto(d, secret)))
+                audit.byPrincipal(c, p, "app.create", audit.appTarget(a)) *>
+                // 既定のアイコン: サイトのアイコン（取れなければ何もしない. 作成は成功のまま）
+                fetchIcon(id).void *> appDto(a).map(d => Right(AppCreatedDto(d, secret)))
           }
         }
+
+  /** アイコンを取りに行くサイト: 起動の URL、なければ OIDC のリダイレクト URI・SAML の ACS（https のもの）. */
+  private def siteOf(id: UUID): IO[Option[String]] =
+    (apps.find(id), apps.oidc(id), apps.saml(id)).mapN { (a, o, s) =>
+      (a.flatMap(_.launchUrl).toList ++ o.toList.flatMap(_.redirectUris) ++ s.map(_.acsUrl).toList)
+        .find(u => Uri.fromString(u).toOption.exists(SiteIcon.allowed))
+    }
+
+  /** サイトのアイコンを取ってアプリのアイコンにする. */
+  private def fetchIcon(id: UUID): IO[Either[String, Unit]] =
+    siteOf(id).flatMap {
+      case None => IO.pure(Left("アイコンを取りに行ける URL（https の起動の URL・リダイレクト URI・ACS）がありません"))
+      case Some(site) => icons.fetch(site).flatMap(_.traverse(img => apps.setIcon(id, Some(img))))
+    }
 
   private def updateApp(p: Principal, id: UUID, r: AppReq, c: ReqCtx): Res[AppDto] =
     apps.find(id).flatMap {
@@ -444,9 +472,13 @@ final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionS
         groupFrom(r) match
           case Left(e) => err(Status.BadRequest, e)
           case Right((name, rule, pol)) =>
-            dir.groups.create(NewGroup(name, r.description, r.parentId, r.attributes, r.isAdmin, rule, priority = r.priority, policy = pol)).flatMap {
-              case Left(e) => fail(Fail.from(e))
-              case Right(g) => dir.recomputeGroup(g) *> audited(audit, req, p, "group.create", audit.groupTarget(g)) *> Ok(dir.groupDto(g, 0))
+            checkParents(r.parentIds.distinct, rule).flatMap {
+              case Left(e) => err(Status.BadRequest, e)
+              case Right(_) =>
+                dir.groups.create(NewGroup(name, r.description, r.parentIds.distinct, r.attributes, r.isAdmin, rule, priority = r.priority, policy = pol)).flatMap {
+                  case Left(e) => fail(Fail.from(e))
+                  case Right(g) => dir.recomputeGroup(g) *> audited(audit, req, p, "group.create", audit.groupTarget(g)) *> Ok(dir.groupDto(g, 0))
+                }
             }
       })
 
@@ -462,13 +494,18 @@ final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionS
             groupFrom(r) match
               case Left(e) => err(Status.BadRequest, e)
               case Right((name, rule, pol)) =>
-                dir.groups.save(g.copy(name = name, description = r.description, parentId = r.parentId.filterNot(_ == id), attributes = r.attributes,
-                  isAdmin = r.isAdmin, rule = rule, priority = r.priority, policy = pol)).flatMap {
-                  case Left(e) => fail(Fail.from(e))
-                  case Right(saved) =>
-                    dir.recomputeGroup(saved) *> audited(audit, req, p, "group.update", audit.groupTarget(saved),
-                      Json.obj("priority" -> saved.priority.asJson, "policy" -> saved.policy.asJson)) *>
-                      dir.groups.effectiveMembers(id).flatMap(ms => Ok(dir.groupDto(saved, ms.size)))
+                val parents = r.parentIds.distinct.filterNot(_ == id)
+                checkParents(parents, rule).flatMap {
+                  case Left(e) => err(Status.BadRequest, e)
+                  case Right(_) =>
+                    dir.groups.save(g.copy(name = name, description = r.description, parentIds = parents, attributes = r.attributes,
+                      isAdmin = r.isAdmin, rule = rule, priority = r.priority, policy = pol)).flatMap {
+                      case Left(e) => fail(Fail.from(e))
+                      case Right(saved) =>
+                        dir.recomputeGroup(saved) *> audited(audit, req, p, "group.update", audit.groupTarget(saved),
+                          Json.obj("parents" -> saved.parentIds.asJson, "priority" -> saved.priority.asJson, "policy" -> saved.policy.asJson)) *>
+                          dir.groups.effectiveMembers(id).flatMap(ms => Ok(dir.groupDto(saved, ms.size)))
+                    }
                 }
         }
       })
@@ -543,6 +580,17 @@ final class AdminRoutes(dir: Directory, factors: FactorStore, sessions: SessionS
       admin(req)(p => Conv.readImage(req, cfg.maxAvatarBytes).flatMap {
         case Left(e)    => err(Status.BadRequest, e)
         case Right(img) => apps.setIcon(id, Some(img)) *> audited(audit, req, p, "app.icon.update", Some(("application", id.toString, ""))) *> NoContent()
+      })
+
+    case req @ POST -> Root / "api" / "admin" / "apps" / UuidVar(id) / "icon" / "fetch" =>
+      admin(req)(p => apps.find(id).flatMap {
+        case None => err(Status.NotFound, "アプリケーションが見つかりません")
+        case Some(_) =>
+          fetchIcon(id).flatMap {
+            case Left(e)  => err(Status.BadRequest, e)
+            case Right(_) => audited(audit, req, p, "app.icon.fetch", Some(("application", id.toString, ""))) *>
+                apps.find(id).flatMap(_.traverse(appDto)).flatMap(d => Ok(d))
+          }
       })
 
     case req @ DELETE -> Root / "api" / "admin" / "apps" / UuidVar(id) / "icon" => admin(req)(_ => apps.setIcon(id, None) *> NoContent())

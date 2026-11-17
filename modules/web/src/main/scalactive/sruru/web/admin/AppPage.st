@@ -125,6 +125,12 @@ def uploadIcon(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.fil
   }
 }
 
+/** サイトのアイコン（favicon）を取り直す（起動の URL などのサイトから）. */
+def fetchIcon(s: State, props: Props): Unit =
+  Store.report(Api.post[Option[AppDto]](s"/api/admin/apps/${props.id}/icon/fetch")) { a =>
+    Store.toast("サイトのアイコンを登録しました"); a.foreach(x => s.app := Some(x))
+  }
+
 def removeIcon(s: State, props: Props): Unit =
   Store.report(Api.delete(s"/api/admin/apps/${props.id}/icon"))(_ => Api.get[AppDto](s"/api/admin/apps/${props.id}").foreach(a => s.app := Some(a)))
 
@@ -164,6 +170,7 @@ val nameIdFormats = List(
       <h1>{{ title(s, props) }}</h1>
       <template v-for="a in appList(s)">
         <label class="btn small">アイコンを選ぶ<input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" @change="uploadIcon(s, props, event)"></label>
+        <button class="small" title="起動の URL（なければリダイレクト URI・ACS）のサイトのアイコンを取り込みます" @click="fetchIcon(s, props)">サイトのアイコンを取得</button>
         <button v-if="a.iconUrl.isDefined" class="ghost small" @click="removeIcon(s, props)">アイコンを外す</button>
         <button class="danger small" @click="remove(s, props)">削除</button>
       </template>

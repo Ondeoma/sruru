@@ -273,5 +273,5 @@ final class Directory(val users: UserStore, val groups: GroupStore, factors: Fac
       u.phoneNumber, Some(u.createdAt), Some(u.updatedAt), u.lastLoginAt)
 
   def groupDto(g: Group, count: Int): GroupDto =
-    GroupDto(g.id, g.name, g.description, g.parentId, g.attributes, g.isAdmin, g.rule.map(_.asJson), g.source, g.externalId, count, Some(g.createdAt),
+    GroupDto(g.id, g.name, g.description, g.parentIds, g.attributes, g.isAdmin, g.rule.map(_.asJson), g.source, g.externalId, count, Some(g.createdAt),
       g.priority, g.policy.getOrElse(GroupPolicy()))

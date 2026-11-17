@@ -46,7 +46,8 @@ object Conv:
         else Right((b, ct))
       }
 
-  private def safeSvg(s: String): Boolean =
+  /** SVG にスクリプト・イベントの属性・外部の参照がないか. */
+  def safeSvg(s: String): Boolean =
     val t = s.toLowerCase
     t.contains("<svg") && !List("<script", "javascript:", "<foreignobject", "<!entity", "<iframe", "<embed", "<object").exists(t.contains) &&
       !"""\son[a-z]+\s*=""".r.findFirstIn(t).isDefined && !"""(href|src)\s*=\s*["']?\s*(https?:|//|data:)""".r.findFirstIn(t).isDefined
@@ -96,11 +97,13 @@ final class MeRoutes(dir: Directory, factors: FactorStore, sessions: SessionStor
         dir.mfaRequired(u, m, p)),
       u.passwordHash.isDefined, u.source, u.locale, u.zoneinfo, u.phoneNumber, rules)
 
-  /** ポータルに出すアプリ（使えるものだけ）. */
+  /** ポータルに出すアプリ（使えるものだけ）. 本人が並べ替えた順. 並べ替えた後に増えたアプリは後ろに名前の順. */
   def portal(u: User, m: Membership): IO[List[AppBriefDto]] =
-    (apps.all, apps.allAccessGroups).mapN { (as, access) =>
+    (apps.all, apps.allAccessGroups, apps.appOrder(u.id)).mapN { (as, access, order) =>
+      val pos = order.zipWithIndex.toMap
       as.filter(a => a.enabled && a.showInPortal && (!a.restrictAccess || access.getOrElse(a.id, Nil).exists(m.ids.contains)))
         .map(login.appBrief).filter(_.launchUrl.isDefined)
+        .zipWithIndex.sortBy((a, i) => (pos.getOrElse(a.id, Int.MaxValue), i)).map(_._1)
     }
 
   private def updateMe(p: Principal, r: MeUpdateReq, c: ReqCtx): Res[MeDto] =
@@ -246,6 +249,15 @@ final class MeRoutes(dir: Directory, factors: FactorStore, sessions: SessionStor
         .flatMap(cs => Ok(RecoveryCodesDto(cs))))
 
     case req @ GET -> Root / "api" / "me" / "apps" => authed(req)(p => portal(p.user, p.membership).flatMap(Ok(_)))
+
+    // ポータルの並び順（本人だけのもの）
+    case req @ PUT -> Root / "api" / "me" / "apps" / "order" =>
+      authed(req)(p => body[AppOrderReq](req) { r =>
+        if r.appIds.size > 1000 then err(Status.BadRequest, "アプリが多すぎます")
+        else apps.setAppOrder(p.id, r.appIds.distinct) *> NoContent()
+      })
+
+    case req @ DELETE -> Root / "api" / "me" / "apps" / "order" => authed(req)(p => apps.clearAppOrder(p.id) *> NoContent())
 
     case req @ GET -> Root / "api" / "me" / "sessions" =>
       authed(req)(p => Time.now.flatMap(now => sessions.loginsOfUser(p.id, now)).flatMap(ls => Ok(ls.map(Conv.session(_, p.login.map(_.id))))))

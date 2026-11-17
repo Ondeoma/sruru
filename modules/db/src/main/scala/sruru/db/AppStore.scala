@@ -17,8 +17,19 @@ final class AppStore(xa: Transactor[IO]) extends TxStore(xa):
     a.require_mfa, a.ip_allow, a.restrict_access, a.created_at, a.updated_at"""
   private def selectApp(where: Fragment): Query0[Application] = (fr"select" ++ appCols ++ fr"from applications a" ++ where).query[Application]
 
-  def all: IO[List[Application]] = tx(selectApp(fr"order by lower(a.name)").to[List])
+  def all: IO[List[Application]] = tx(selectApp(fr"order by lower(a.name), a.slug").to[List])
   def find(id: UUID): IO[Option[Application]] = tx(selectApp(fr"where a.id = $id").option)
+
+  /** 利用者が並べ替えたポータルの順（なければ空）. */
+  def appOrder(userId: UUID): IO[List[UUID]] =
+    tx(sql"select app_ids from user_app_order where user_id = $userId".query[List[UUID]].option.map(_.getOrElse(Nil)))
+
+  def setAppOrder(userId: UUID, appIds: List[UUID]): IO[Unit] = tx(
+    sql"""insert into user_app_order (user_id, app_ids) values ($userId, ${appIds.toArray})
+          on conflict (user_id) do update set app_ids = excluded.app_ids, updated_at = now()""".update.run.void
+  )
+
+  def clearAppOrder(userId: UUID): IO[Unit] = tx(sql"delete from user_app_order where user_id = $userId".update.run.void)
   def bySlug(slug: String): IO[Option[Application]] = tx(selectApp(fr"where a.slug = $slug").option)
 
   def create(a: Application, oidc: Option[OidcClientConfig], saml: Option[SamlConfig]): IO[Either[StoreError, Application]] = tx(

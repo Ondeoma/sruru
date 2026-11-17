@@ -11,7 +11,7 @@ import sruru.core.*
 import java.time.Instant
 import java.util.UUID
 
-final case class NewGroup(name: String, description: String = "", parentId: Option[UUID] = None, attributes: Json = Json.obj(),
+final case class NewGroup(name: String, description: String = "", parentIds: List[UUID] = Nil, attributes: Json = Json.obj(),
     isAdmin: Boolean = false, rule: Option[GroupRule] = None, source: String = "local", externalId: Option[String] = None,
     priority: Int = 0, policy: Option[sruru.shared.GroupPolicy] = None)
 
@@ -19,7 +19,9 @@ final case class NewGroup(name: String, description: String = "", parentId: Opti
 final class GroupStore(xa: Transactor[IO]) extends TxStore(xa):
   import Codecs.given
 
-  private val cols = fr"g.id, g.name, g.description, g.parent_id, g.attributes, g.is_admin, g.rule, g.source, g.external_id, g.created_at, g.updated_at, " ++
+  private val cols = fr"g.id, g.name, g.description, " ++
+    fr"coalesce((select array_agg(p.parent_id order by p.parent_id) from group_parents p where p.group_id = g.id), '{}'::uuid[]), " ++
+    fr"g.attributes, g.is_admin, g.rule, g.source, g.external_id, g.created_at, g.updated_at, " ++
     fr"g.priority, g.policy"
   private def select(where: Fragment): Query0[Group] = (fr"select" ++ cols ++ fr"from groups g" ++ where).query[Group]
 
@@ -38,22 +40,28 @@ final class GroupStore(xa: Transactor[IO]) extends TxStore(xa):
   def byExternal(source: String, ext: String): IO[Option[Group]] = tx(select(fr"where g.source = $source and g.external_id = $ext").option)
   def findMany(ids: List[UUID]): IO[List[Group]] = if ids.isEmpty then IO.pure(Nil) else tx(select(fr"where g.id = any(${ids.toArray})").to[List])
 
-  /** 親をたどって自分に戻るなら循環. */
-  private def cycles(id: UUID, parent: Option[UUID]): ConnectionIO[Boolean] = parent match
-    case None => false.pure[ConnectionIO]
-    case Some(p) =>
-      sql"""with recursive up(id, parent_id) as (select id, parent_id from groups where id = $p
-              union select g.id, g.parent_id from groups g join up on g.id = up.parent_id)
+  /** 親たちからたどれる祖先（親自身を含む）に自分がいれば循環. */
+  private def cycles(id: UUID, parents: List[UUID]): ConnectionIO[Boolean] =
+    if parents.isEmpty then false.pure[ConnectionIO]
+    else if parents.contains(id) then true.pure[ConnectionIO]
+    else
+      sql"""with recursive up(id) as (select unnest(${parents.toArray})
+              union select p.parent_id from group_parents p join up on p.group_id = up.id)
             select exists(select 1 from up where id = $id)""".query[Boolean].unique
+
+  /** 親を置き換える. */
+  private def setParents(id: UUID, parents: List[UUID]): ConnectionIO[Unit] =
+    sql"delete from group_parents where group_id = $id".update.run *>
+      parents.distinct.traverse_(p => sql"insert into group_parents (group_id, parent_id) values ($id, $p)".update.run)
 
   def create(n: NewGroup): IO[Either[StoreError, Group]] =
     val id = UUID.randomUUID()
     invalidate(tx(sql"select exists(select 1 from groups where lower(name) = lower(${n.name}))".query[Boolean].unique.flatMap {
       case true => fail(StoreError.Conflict(s"グループ「${n.name}」はすでにあります"))
       case false =>
-        sql"""insert into groups (id, name, description, parent_id, attributes, is_admin, rule, source, external_id, priority, policy)
-              values ($id, ${n.name}, ${n.description}, ${n.parentId}, ${n.attributes}, ${n.isAdmin}, ${n.rule}, ${n.source}, ${n.externalId},
-                ${n.priority}, ${n.policy})""".update.run *>
+        sql"""insert into groups (id, name, description, attributes, is_admin, rule, source, external_id, priority, policy)
+              values ($id, ${n.name}, ${n.description}, ${n.attributes}, ${n.isAdmin}, ${n.rule}, ${n.source}, ${n.externalId},
+                ${n.priority}, ${n.policy})""".update.run *> setParents(id, n.parentIds) *>
           select(fr"where g.id = $id").unique.map(Right(_))
     }))
 
@@ -61,10 +69,11 @@ final class GroupStore(xa: Transactor[IO]) extends TxStore(xa):
     sql"select exists(select 1 from groups where lower(name) = lower(${g.name}) and id <> ${g.id})".query[Boolean].unique.flatMap {
       case true => fail(StoreError.Conflict(s"グループ「${g.name}」はすでにあります"))
       case false =>
-        cycles(g.id, g.parentId).flatMap {
+        cycles(g.id, g.parentIds).flatMap {
           case true => fail(StoreError.Invalid("親グループが循環しています"))
           case false =>
-            sql"""update groups set name = ${g.name}, description = ${g.description}, parent_id = ${g.parentId}, attributes = ${g.attributes},
+            setParents(g.id, g.parentIds) *>
+            sql"""update groups set name = ${g.name}, description = ${g.description}, attributes = ${g.attributes},
                     is_admin = ${g.isAdmin}, rule = ${g.rule}, source = ${g.source}, external_id = ${g.externalId},
                     priority = ${g.priority}, policy = ${g.policy}, updated_at = now()
                   where id = ${g.id}""".update.run *> select(fr"where g.id = ${g.id}").option.map(_.toRight(StoreError.NotFound("グループ")))
@@ -84,7 +93,7 @@ final class GroupStore(xa: Transactor[IO]) extends TxStore(xa):
 
   /** 子グループを含めたメンバー（子グループのメンバーは親のメンバーでもある）. */
   def effectiveMembers(groupId: UUID): IO[List[UUID]] = tx(
-    sql"""with recursive down(id) as (select $groupId union select g.id from groups g join down on g.parent_id = down.id)
+    sql"""with recursive down(id) as (select $groupId union select p.group_id from group_parents p join down on p.parent_id = down.id)
           select distinct user_id from (select user_id, group_id from group_members union select user_id, group_id from group_dynamic_members) m
           where m.group_id in (select id from down)""".query[UUID].to[List]
   )

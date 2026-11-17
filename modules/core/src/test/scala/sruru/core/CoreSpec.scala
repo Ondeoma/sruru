@@ -85,7 +85,7 @@ class CoreSpec extends munit.FunSuite:
 
   test("Membership は親グループをたどる") {
     val now = java.time.Instant.now()
-    def g(n: String, parent: Option[java.util.UUID]) = Group(java.util.UUID.randomUUID(), n, "", parent, Json.obj(), false, None, "local", None, now, now)
+    def g(n: String, parent: Option[java.util.UUID]) = Group(java.util.UUID.randomUUID(), n, "", parent.toList, Json.obj(), false, None, "local", None, now, now)
     val root = g("全社", None)
     val dept = g("営業部", Some(root.id))
     val team = g("営業1課", Some(dept.id))

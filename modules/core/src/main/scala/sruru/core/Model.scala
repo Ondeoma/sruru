@@ -41,7 +41,8 @@ final case class Group(
     id: UUID,
     name: String,
     description: String,
-    parentId: Option[UUID],
+    /** 親グループ（複数. 子のメンバーは、すべての親のメンバーでもある） */
+    parentIds: List[UUID],
     attributes: Json,
     isAdmin: Boolean,
     rule: Option[GroupRule],
@@ -68,7 +69,7 @@ object Membership:
     def go(todo: List[UUID], seen: Set[UUID]): Set[UUID] = todo match
       case Nil => seen
       case h :: t if seen(h) => go(t, seen)
-      case h :: t => go(all.get(h).flatMap(_.parentId).toList ::: t, seen + h)
+      case h :: t => go(all.get(h).toList.flatMap(_.parentIds) ::: t, seen + h)
     Membership(go(direct, Set.empty).toList.flatMap(all.get).sortBy(_.name))
 
 final case class AttributeDef(key: String, label: String, kind: String, description: String, userEditable: Boolean, required: Boolean,

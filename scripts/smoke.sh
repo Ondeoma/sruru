@@ -105,6 +105,13 @@ curl -sf -H "Authorization: Bearer $TK" -H 'Content-Type: application/json' -X P
 curl -sf -H "Authorization: Bearer $TK" -H 'Content-Type: application/json' -X POST "$B/mcp" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"get_user\",\"arguments\":{\"user\":\"$SU\"}}}" \
   | jq -e '.result.isError == false' >/dev/null && ok "MCP: get_user"
+# ポータルの並び順（本人だけ. 逆順に保存して戻す）
+IDS=$(curl -sf -b "$C" "$B/api/me/apps" | jq -c '[.[].id]')
+if [ "$(echo "$IDS" | jq length)" -ge 2 ]; then
+  curl -sf -b "$C" "${H[@]}" -X PUT "$B/api/me/apps/order" -d "{\"appIds\":$(echo "$IDS" | jq -c reverse)}" >/dev/null
+  [ "$(curl -sf -b "$C" "$B/api/me/apps" | jq -c '[.[].id]')" = "$(echo "$IDS" | jq -c reverse)" ] && ok "ポータルの並び順を保存" || die "並び順"
+  curl -sf -b "$C" "${H[@]}" -X DELETE "$B/api/me/apps/order" >/dev/null
+fi
 # 漏れたトークンでアカウントを乗っ取れない・SCIM で管理者を変えられない
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TK" -X POST "$B/api/me/recovery-codes")
 [ "$code" = 403 ] && ok "トークンでは回復コードを作れない" || die "回復コード: $code"

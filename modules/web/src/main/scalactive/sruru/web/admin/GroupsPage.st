@@ -15,8 +15,9 @@ def load(s: State): Unit = Store.report(Api.groups())(s.groups := _)
 
 def rows(s: State) = computed {
   val q = s.q.v.trim.toLowerCase
-  val all = GroupTree.flatten(s.groups.v)
-  if (q.isEmpty) all else all.filter((g, _) => g.name.toLowerCase.contains(q) || g.description.toLowerCase.contains(q))
+  // 木（親が複数あるグループは、それぞれの親の下に出す）. 絞り込むときは1回ずつ
+  if (q.isEmpty) GroupTree.tree(s.groups.v)
+  else GroupTree.flatten(s.groups.v).filter((g, _) => g.name.toLowerCase.contains(q) || g.description.toLowerCase.contains(q)).map((g, d) => (g, d, g.id.toString))
 }
 
 /** 作ったら、そのグループの画面へ（メンバー・ポリシーの上書きはそこで設定する）. */
@@ -36,7 +37,7 @@ def remove(s: State, g: GroupDto): Unit = Dialog.confirm(s"グループ「${g.na
       <table class="list">
         <thead><tr><th>名前</th><th class="hide-sp">説明</th><th>メンバー</th><th>種類</th><th></th></tr></thead>
         <tbody>
-          <tr v-for="gd in rows(s)" :key="gd._1.id" class="clickable" @click='Router.go("/admin/groups/" + gd._1.id)'>
+          <tr v-for="gd in rows(s)" :key="gd._3" class="clickable" @click='Router.go("/admin/groups/" + gd._1.id)'>
             <td :style="GroupTree.indent(gd._2)"><span v-if="gd._2 > 0" class="muted">└ </span>{{ gd._1.name }}</td>
             <td class="small muted hide-sp">{{ gd._1.description }}</td>
             <td>{{ gd._1.memberCount }}</td>

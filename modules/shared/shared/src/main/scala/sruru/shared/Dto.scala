@@ -52,6 +52,9 @@ final case class ClientConfigDto(
 final case class AppBriefDto(id: UUID, slug: String, name: String, iconUrl: Option[String], launchUrl: Option[String] = None,
     description: String = "", protocol: String = "oidc") derives ConfiguredCodec
 
+/** ポータルのアプリの並び順（ドラッグで並べ替えたもの）. */
+final case class AppOrderReq(appIds: List[UUID]) derives ConfiguredCodec
+
 final case class ScopeDto(name: String, description: String) derives ConfiguredCodec
 
 /** 認可の要求（ログイン・同意・アカウントの選択の画面に出す）. */
@@ -226,7 +229,7 @@ final case class GroupDto(
     id: UUID,
     name: String,
     description: String = "",
-    parentId: Option[UUID] = None,
+    parentIds: List[UUID] = Nil,
     attributes: Json = Json.obj(),
     isAdmin: Boolean = false,
     rule: Option[Json] = None,
@@ -240,7 +243,7 @@ final case class GroupDto(
     policy: GroupPolicy = GroupPolicy()
 ) derives ConfiguredCodec
 
-final case class GroupReq(name: String, description: String = "", parentId: Option[UUID] = None, attributes: Json = Json.obj(),
+final case class GroupReq(name: String, description: String = "", parentIds: List[UUID] = Nil, attributes: Json = Json.obj(),
     isAdmin: Boolean = false, rule: Option[Json] = None, priority: Int = 0, policy: GroupPolicy = GroupPolicy()) derives ConfiguredCodec
 
 final case class GroupMembersDto(direct: List[UserBrief], dynamic: List[UserBrief], effective: Int) derives ConfiguredCodec

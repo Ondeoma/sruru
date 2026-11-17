@@ -94,7 +94,7 @@ object Main extends IOApp.Simple:
       _   <- IO.println(s"[sruru] database migrated ($n migration(s) applied); node ${cfg.api.nodeId}")
       _ <- (for
         xa   <- Database.transactor(cfg.db)
-        http <- EmberClientBuilder.default[IO].withTimeout(30.seconds).build
+        http <- EmberClientBuilder.default[IO].withTimeout(30.seconds).withMaxResponseHeaderSize(64 * 1024).build   // 大きなヘッダーを返すサイトもある
         box   = new SecretBox(cfg.appSecret)
         users      = new UserStore(xa)
         groups     = new GroupStore(xa)
@@ -124,7 +124,7 @@ object Main extends IOApp.Simple:
         loginR    = new LoginRoutes(login, fed, fedStore, auth, sessions, tokens, apps, dir, factors, settings, policies, audit, box, cfg.api)
         me        = new MeRoutes(dir, factors, sessions, tokens, apps, fedStore, login, mail, policies, audit, box, auth, cfg.api)
         adminR    = new AdminRoutes(dir, factors, sessions, tokens, apps, fedStore, fed, auditStore, keys, me, login, claims,
-                      policies, audit, mail, box, settings, auth, cfg.api)
+                      policies, audit, mail, box, settings, new SiteIcon(http), auth, cfg.api)
         scim      = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg.api)
         resume    = new ResumeRoutes(tokens, Map("oidc" -> oidc.resume, "saml" -> saml.resume), gate)
         _ <- Resource.eval(setupNotice(loginR))

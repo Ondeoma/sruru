@@ -126,21 +126,49 @@ object Mappings {
 // ------------------------------------------------------------------ グループの木
 
 object GroupTree {
+  import java.util.UUID
 
-  /** 親子の順に並べる（深さ付き. 親が見つからないものは最上位にする）. */
+  /** 親（複数）のうち、名前の順で最初のもの（選択肢などで1か所に置くときの親）. */
+  private def mainParent(g: GroupDto, m: Map[UUID, GroupDto]): Option[UUID] = g.parentIds.flatMap(m.get).sortBy(_.name).headOption.map(_.id)
+
+  /**
+   * 親子の順に並べる（深さ付き. 各グループは1回だけ、名前の順で最初の親の下に置く. 親が見つからないものは最上位）.
+   * チェックボックスや選択肢など、同じグループを2回出したくないところで使う.
+   */
   def flatten(gs: List[GroupDto]): List[(GroupDto, Int)] = {
-    val ids = gs.map(_.id).toSet
-    val byParent = gs.groupBy(g => g.parentId.filter(ids.contains))
-    def walk(p: Option[java.util.UUID], d: Int, seen: Set[java.util.UUID]): List[(GroupDto, Int)] =
+    val m = gs.map(x => x.id -> x).toMap
+    val byParent = gs.groupBy(g => mainParent(g, m))
+    def walk(p: Option[UUID], d: Int, seen: Set[UUID]): List[(GroupDto, Int)] =
       byParent.getOrElse(p, Nil).sortBy(_.name).filterNot(g => seen.contains(g.id)).flatMap(g => (g, d) :: walk(Some(g.id), d + 1, seen + g.id))
     walk(None, 0, Set.empty)
   }
 
-  /** 「親 / 子」の名前. */
+  /** 木の表示（親が複数あるグループは、それぞれの親の下に出す）. (グループ, 深さ, 行のキー). */
+  def tree(gs: List[GroupDto]): List[(GroupDto, Int, String)] = {
+    val ids = gs.map(_.id).toSet
+    def parentsOf(g: GroupDto): List[UUID] = g.parentIds.filter(ids.contains)
+    def walk(p: Option[UUID], d: Int, path: List[UUID]): List[(GroupDto, Int, String)] =
+      gs.filter(g => p.fold(parentsOf(g).isEmpty)(parentsOf(g).contains)).sortBy(_.name).filterNot(g => path.contains(g.id))
+        .flatMap(g => (g, d, (g.id :: path).mkString("/")) :: walk(Some(g.id), d + 1, g.id :: path))
+    walk(None, 0, Nil)
+  }
+
+  /** 「親 / 子」の名前（親が複数なら名前の順で最初の親をたどる）. */
   def path(gs: List[GroupDto], g: GroupDto): String = {
     val m = gs.map(x => x.id -> x).toMap
-    def up(x: GroupDto, n: Int): List[String] = x.parentId.flatMap(m.get).filter(_ => n < 10).map(p => up(p, n + 1)).getOrElse(Nil) :+ x.name
+    def up(x: GroupDto, n: Int): List[String] = mainParent(x, m).flatMap(m.get).filter(_ => n < 10).map(p => up(p, n + 1)).getOrElse(Nil) :+ x.name
     up(g, 0).mkString(" / ")
+  }
+
+  /** g の子孫（親にすると循環するもの）. */
+  def descendants(gs: List[GroupDto], id: UUID): Set[UUID] = {
+    def go(todo: List[UUID], seen: Set[UUID]): Set[UUID] = todo match {
+      case Nil => seen
+      case h :: t =>
+        val kids = gs.filter(_.parentIds.contains(h)).map(_.id).filterNot(seen.contains)
+        go(kids ++ t, seen ++ kids)
+    }
+    go(List(id), Set.empty)
   }
 
   def indent(d: Int): String = s"padding-left: ${0.55 + d * 1.2}rem"
