@@ -1,0 +1,56 @@
+# 名前・アドレス・etcd・パスワードは環境変数（PATRONI_*）で上書きする
+scope: sruru
+restapi:
+  listen: 0.0.0.0:8008
+etcd3:
+  hosts: etcd:2379
+bootstrap:
+  dcs:
+    ttl: 20
+    loop_wait: 5
+    retry_timeout: 5
+    maximum_lag_on_failover: 1048576
+    check_timeline: true         # 分岐した（古いタイムラインの）ノードを昇格させない
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+  initdb:
+    - encoding: UTF8
+    - locale: C.UTF-8
+    - data-checksums
+  pg_hba:
+    - local all all trust
+    # Docker のネットワーク（プライベートのアドレス）からだけ
+    - host replication replicator 10.0.0.0/8 scram-sha-256
+    - host replication replicator 172.16.0.0/12 scram-sha-256
+    - host replication replicator 192.168.0.0/16 scram-sha-256
+    - host all all 10.0.0.0/8 scram-sha-256
+    - host all all 172.16.0.0/12 scram-sha-256
+    - host all all 192.168.0.0/16 scram-sha-256
+  post_bootstrap: /etc/patroni/post_bootstrap.sh
+postgresql:
+  listen: 0.0.0.0:5432
+  basebackup:
+    - checkpoint: fast   # 既定(spread)だと複製の作成がチェックポイント待ちで数分止まる
+  remove_data_directory_on_rewind_failure: true
+  remove_data_directory_on_diverged_timelines: true
+  data_dir: /var/lib/postgresql/patroni/data
+  bin_dir: /usr/local/bin
+  pgpass: /tmp/pgpass
+  authentication:
+    superuser:
+      username: postgres
+    replication:
+      username: replicator
+  parameters:
+    unix_socket_directories: /tmp
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false

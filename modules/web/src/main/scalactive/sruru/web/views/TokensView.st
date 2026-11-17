@@ -1,0 +1,49 @@
+<script lang="scala">
+import sruru.shared.*
+import sruru.web.*
+import sruru.web.parts.*
+
+import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
+
+// 個人設定: API トークン（REST API・MCP・SCIM から使う）
+case class State(tokens: RV[List[ApiTokenDto]] = RV(Nil))
+
+def initState() = State()
+
+def mounted(s: State): Unit = { pageTitle("API トークン"); load(s) }
+
+def load(s: State): Unit = Api.get[List[ApiTokenDto]]("/api/me/tokens").foreach(s.tokens := _)
+
+def remove(s: State, t: ApiTokenDto): Unit =
+  Dialog.confirm(s"API トークン「${t.name}」を削除しますか？使っているプログラムは使えなくなります。", "削除") {
+    Store.report(Api.delete(s"/api/me/tokens/${t.id}"))(_ => load(s))
+  }
+</script>
+
+<template>
+  <div class="page narrow">
+    <h1>個人設定</h1>
+    <MeTabs />
+    <section class="panel">
+      <h2>API トークン</h2>
+      <p class="small muted">プログラムや AI（MCP）から sruru を使うためのトークンです。<code>Authorization: Bearer &lt;トークン&gt;</code> で送ります。
+        できることは「あなたの権限」と「トークンのスコープ」の両方を満たす範囲です。</p>
+      <TokenCreator url="/api/me/tokens" :allowAdmin="Store.isAdmin.v" :onCreated="_ => load(s)" />
+    </section>
+    <div class="table-wrap">
+      <table class="list">
+        <thead><tr><th>用途</th><th>トークン</th><th>スコープ</th><th>有効期限</th><th>最後の使用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="t in s.tokens" :key="t.id">
+            <td>{{ t.name }}</td><td><code>{{ t.prefix }}…</code></td><td class="small">{{ t.scopes.mkString(", ") }}</td>
+            <td class="small nowrap">{{ t.expiresAt.map(Fmt.date).getOrElse("無期限") }}</td>
+            <td class="small nowrap">{{ Fmt.optAgo(t.lastUsedAt, "未使用") }}</td>
+            <td><button class="ghost small" @click="remove(s, t)">削除</button></td>
+          </tr>
+          <tr v-if="s.tokens.mapC(_.isEmpty)"><td colspan="6" class="muted">API トークンはありません</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">MCP のエンドポイント: <code>{{ Dom.origin }}/mcp</code>（Streamable HTTP）。REST API の一覧は <a href="/api/endpoints" target="_blank">/api/endpoints</a>。</p>
+  </div>
+</template>

@@ -1,0 +1,69 @@
+name: sruru-ha  # 開発用 docker-compose.dev.yml（プロジェクト名 sruru）と衝突しないように
+# 3ノード構成の試験環境（本番のVM 3台構成を1台のDocker上で再現する）。
+#   etcd(1台) + Patroni/PostgreSQL(3台) + sruruアプリ(3台) + HAProxy + Mailpit
+# 使い方: scripts/ha-up.sh   （入口: http://localhost:9191 、HAProxy統計: http://localhost:9404）
+# 本番では etcd も3台（各VMに1つ）、HAProxy は各VM + keepalived(VIP)。deploy/vm を参照。
+x-pg: &pg
+  build: { context: ., dockerfile: deploy/docker/patroni.Dockerfile }
+  image: sruru-patroni:dev
+  environment: &pgenv
+    PATRONI_SCOPE: sruru
+    PATRONI_ETCD3_HOSTS: etcd:2379
+    PATRONI_SUPERUSER_PASSWORD: postgres-secret
+    PATRONI_REPLICATION_PASSWORD: replicator-secret
+    PATRONI_RESTAPI_USERNAME: patroni
+    PATRONI_RESTAPI_PASSWORD: patroni-secret
+    SRURU_DB_PASSWORD: sruru
+  depends_on: [etcd]
+x-app: &app
+  build: { context: ., dockerfile: deploy/docker/app.Dockerfile }
+  image: sruru-app:dev
+  environment: &appenv
+    DATABASE_URL: jdbc:postgresql://pg1:5432,pg2:5432,pg3:5432/sruru?targetServerType=primary&connectTimeout=3&tcpKeepAlive=true
+    DATABASE_USER: sruru
+    DATABASE_PASSWORD: sruru
+    APP_SECRET: ha-test-app-secret-0123456789
+    PUBLIC_URL: http://localhost:9191
+    SMTP_HOST: mail
+    SMTP_PORT: "1025"
+    SMTP_TLS: none
+    MAIL_FROM: sruru@localhost
+  depends_on: [pg1, pg2, pg3]
+  restart: unless-stopped
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.17
+    command: >
+      etcd --name etcd --data-dir /etcd-data
+      --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://etcd:2379
+      --listen-peer-urls http://0.0.0.0:2380 --initial-advertise-peer-urls http://etcd:2380
+      --initial-cluster etcd=http://etcd:2380 --enable-v2=false
+  pg1:
+    <<: *pg
+    hostname: pg1
+    environment: { <<: *pgenv, PATRONI_NAME: pg1, PATRONI_RESTAPI_CONNECT_ADDRESS: "pg1:8008", PATRONI_POSTGRESQL_CONNECT_ADDRESS: "pg1:5432" }
+  pg2:
+    <<: *pg
+    hostname: pg2
+    environment: { <<: *pgenv, PATRONI_NAME: pg2, PATRONI_RESTAPI_CONNECT_ADDRESS: "pg2:8008", PATRONI_POSTGRESQL_CONNECT_ADDRESS: "pg2:5432" }
+  pg3:
+    <<: *pg
+    hostname: pg3
+    environment: { <<: *pgenv, PATRONI_NAME: pg3, PATRONI_RESTAPI_CONNECT_ADDRESS: "pg3:8008", PATRONI_POSTGRESQL_CONNECT_ADDRESS: "pg3:5432" }
+  app1:
+    <<: *app
+    environment: { <<: *appenv, NODE_ID: app1 }
+  app2:
+    <<: *app
+    environment: { <<: *appenv, NODE_ID: app2 }
+  app3:
+    <<: *app
+    environment: { <<: *appenv, NODE_ID: app3 }
+  haproxy:
+    image: haproxy:3.0-alpine
+    volumes: ["./deploy/docker/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"]
+    ports: ["9191:8080", "9404:8404"]
+    depends_on: [app1, app2, app3]
+  mail:
+    image: axllent/mailpit:v1.27
+    # 画面は使わないのでポートは公開しない（docker compose -f docker-compose.ha.yml port mail 8025 で確かめられる）

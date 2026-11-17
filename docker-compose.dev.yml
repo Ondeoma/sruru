@@ -1,0 +1,23 @@
+# 開発用: PostgreSQL と Mailpit（送信メールを受け止めるだけの SMTP。http://localhost:8031 で中身を見られる）
+# ほかのプロジェクトの開発環境と同時に動かせるよう、よく使われるポートからずらしている
+name: sruru
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sruru
+      POSTGRES_PASSWORD: sruru
+      POSTGRES_DB: sruru
+    ports: ["127.0.0.1:54360:5432"]   # 開発用のパスワードなので、このマシンの中からだけ
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/docker/dev-initdb.sql:/docker-entrypoint-initdb.d/10-sruru-test.sql:ro   # テスト用DB sruru_test
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sruru"]
+      interval: 2s
+      retries: 30
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:1031:1025", "127.0.0.1:8031:8025"]
+volumes:
+  pgdata:

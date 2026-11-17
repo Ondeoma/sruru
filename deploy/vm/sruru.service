@@ -1,0 +1,22 @@
+# /etc/systemd/system/sruru.service
+[Unit]
+Description=sruru application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sruru
+Group=sruru
+EnvironmentFile=/etc/sruru/sruru.env
+ExecStart=/usr/bin/java -Xms512m -Xmx1g -cp '/opt/sruru/current/lib/*' sruru.app.Main
+# 停止時は処理中のリクエストを少し待ってから終わる（他ノードがそのまま受ける）
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

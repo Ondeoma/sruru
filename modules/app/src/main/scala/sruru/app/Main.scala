@@ -1,0 +1,248 @@
+package sruru.app
+
+import cats.effect.*
+import cats.syntax.all.*
+import com.comcast.ip4s.*
+import doobie.implicits.*
+import fs2.io.file.Path
+import fs2.io.net.Network
+import fs2.io.net.tls.TLSParameters
+import org.http4s.*
+import org.http4s.circe.CirceEntityEncoder.*
+import org.http4s.dsl.io.*
+import org.http4s.ember.client.EmberClientBuilder
+import org.http4s.ember.server.EmberServerBuilder
+import org.http4s.server.middleware.{EntityLimiter, ErrorHandling}
+import org.http4s.server.staticcontent.*
+import sruru.api.*
+import sruru.db.*
+import sruru.notify.{SmtpConfig, SmtpMailer}
+import sruru.security.SecretBox
+import sruru.shared.ErrorDto
+
+import scala.concurrent.duration.*
+
+final case class TlsConfig(keystore: String, password: String, port: Int)
+
+final case class AppConfig(
+    port: Int,
+    db: DbConfig,
+    api: ApiConfig,
+    staticDir: Option[String],
+    smtp: Option[SmtpConfig],
+    appSecret: String,
+    tls: Option[TlsConfig]
+)
+
+/** 設定は環境変数から読む. */
+object Config:
+  private def opt(name: String): Option[String] = sys.env.get(name).map(_.trim).filter(_.nonEmpty)
+  private def int(name: String): Option[Int]    = opt(name).flatMap(_.toIntOption)
+  private def enabled(name: String): Boolean    = opt(name).exists(_.equalsIgnoreCase("true"))
+  private def required(name: String): Either[String, String] = opt(name).toRight(s"環境変数 $name を設定してください")
+
+  def load: IO[AppConfig] = IO.fromEither(
+    (for
+      dbUrl  <- required("DATABASE_URL")
+      dbUser <- required("DATABASE_USER")
+      dbPass <- required("DATABASE_PASSWORD")
+      pub    <- required("PUBLIC_URL")
+      dev     = enabled("DEV_MODE")
+      // 例示の値（change-me）のまま本番で動かさない
+      _      <- Either.cond(dev || !List(dbPass, opt("APP_SECRET").getOrElse("")).exists(_.toLowerCase.contains("change-me")), (),
+                  "APP_SECRET・DATABASE_PASSWORD が例示の値（change-me）のままです。秘密の値に変えてください")
+      secret <- opt("APP_SECRET") match
+                  case Some(s) if s.length >= 16 => Right(s)
+                  case Some(_)                   => Left("APP_SECRET は16文字以上にしてください")
+                  case None if dev               => Right("sruru-development-secret")
+                  case None                      => Left("APP_SECRET（16文字以上の秘密の値. 全ノードで同じ値）を設定してください")
+      tls <- (opt("TLS_KEYSTORE"), opt("TLS_KEYSTORE_PASSWORD")) match
+               case (Some(k), Some(p)) => Right(Some(TlsConfig(k, p, int("HTTPS_PORT").getOrElse(8443))))
+               case (None, _)          => Right(None)
+               case _                  => Left("TLS_KEYSTORE_PASSWORD を設定してください")
+    yield
+      val base = pub.stripSuffix("/")
+      val smtp = opt("SMTP_HOST").map { h =>
+        val t = opt("SMTP_TLS").getOrElse("starttls").toLowerCase
+        SmtpConfig(h, int("SMTP_PORT").getOrElse(if t == "ssl" then 465 else if t == "none" then 25 else 587), opt("SMTP_USER"),
+          opt("SMTP_PASSWORD"), t, opt("MAIL_FROM").getOrElse(s"sruru@$h"))
+      }
+      AppConfig(
+        port = int("HTTP_PORT").getOrElse(8080),
+        db = DbConfig(dbUrl, dbUser, dbPass, int("DATABASE_POOL_SIZE").getOrElse(10)),
+        api = ApiConfig(publicUrl = base, cookieSecure = base.startsWith("https://"), devMode = dev, mailEnabled = smtp.isDefined,
+          nodeId = opt("NODE_ID").getOrElse(java.net.InetAddress.getLocalHost.getHostName + "-" + java.util.UUID.randomUUID().toString.take(8))),
+        staticDir = opt("STATIC_DIR"),
+        smtp = smtp,
+        appSecret = secret,
+        tls = tls
+      )
+    ).left.map(new IllegalArgumentException(_))
+  )
+
+object Main extends IOApp.Simple:
+
+  private given org.typelevel.log4cats.LoggerFactory[IO] = org.typelevel.log4cats.slf4j.Slf4jFactory.create[IO]
+
+  /** バックエンドのパス（画面の index.html を返さない）. */
+  private val backendPrefixes = Set("api", "auth", "oauth2", "saml", "scim", "mcp", ".well-known", "avatars", "app-icons", "brand-logos", "healthz")
+
+  def run: IO[Unit] =
+    for
+      cfg <- Config.load
+      n   <- migrateWithRetry(cfg)
+      _   <- IO.println(s"[sruru] database migrated ($n migration(s) applied); node ${cfg.api.nodeId}")
+      _ <- (for
+        xa   <- Database.transactor(cfg.db)
+        http <- EmberClientBuilder.default[IO].withTimeout(30.seconds).build
+        box   = new SecretBox(cfg.appSecret)
+        users      = new UserStore(xa)
+        groups     = new GroupStore(xa)
+        sessions   = new SessionStore(xa)
+        factors    = new FactorStore(xa)
+        apps       = new AppStore(xa)
+        tokens     = new TokenStore(xa)
+        auditStore = new AuditStore(xa)
+        settings   = new SettingsStore(xa)
+        fedStore   = new FederationStore(xa)
+        mails      = new MailStore(xa)
+        lock       = new JobLock(xa, cfg.api.nodeId)
+        policies <- Resource.eval(PolicyService.create(settings))
+        keys     <- Resource.eval(KeyService.create(tokens, box, "sruru"))
+        _        <- Resource.eval(keys.ensure)
+        audit     = new AuditService(auditStore)
+        mail      = new MailService(mails, cfg.smtp.map(new SmtpMailer(_)), cfg.api)
+        notifier  = new LogoutNotifier(apps, tokens, keys, http, cfg.api)
+        dir       = new Directory(users, groups, factors, sessions, tokens, policies, notifier, cfg.api)
+        auth      = new SessionAuth(sessions, factors, dir, policies, cfg.api)
+        login     = new LoginService(dir, sessions, factors, tokens, apps, fedStore, policies, audit, mail, box, cfg.api)
+        fed       = new FederationService(fedStore, dir, audit, box, http, lock, cfg.api)
+        gate      = new AuthGate(auth, apps, tokens, dir, policies, audit)
+        claims    = new Claims(dir, apps)
+        oidc      = new OidcRoutes(apps, tokens, sessions, dir, keys, claims, gate, auth, audit, http, cfg.api)
+        saml      = new SamlRoutes(apps, tokens, sessions, dir, keys, gate, auth, audit, cfg.api)
+        loginR    = new LoginRoutes(login, fed, fedStore, auth, sessions, tokens, apps, dir, factors, settings, policies, audit, box, cfg.api)
+        me        = new MeRoutes(dir, factors, sessions, tokens, apps, fedStore, login, mail, policies, audit, box, auth, cfg.api)
+        adminR    = new AdminRoutes(dir, factors, sessions, tokens, apps, fedStore, fed, auditStore, keys, me, login, claims,
+                      policies, audit, mail, box, settings, auth, cfg.api)
+        scim      = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg.api)
+        resume    = new ResumeRoutes(tokens, Map("oidc" -> oidc.resume, "saml" -> saml.resume), gate)
+        _ <- Resource.eval(setupNotice(loginR))
+        loops = List[IO[Unit]](
+                  mail.loop, fed.loop,
+                  purgeLoop(sessions, dir, tokens, factors, auditStore, mails, settings, policies, lock),
+                  Loops.every(10.minutes, 1.hour, "dynamic groups")(lock.exclusive("dynamic-groups", 50.minutes)(dir.recomputeAll))
+                )
+        _ <- loops.traverse_(_.background)
+        rest = healthRoutes(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+> saml.routes <+>
+                 resume.routes <+> scim.routes
+        app  = rest <+> new McpRoutes(rest, auth, cfg.api).routes
+        all  = cfg.staticDir.fold(app)(d => app <+> spa(d))
+        // 本文は 2MB まで（画像は 512KB まで. それより大きな要求で資源を使い切らないように）
+        httpApp = securityHeaders(cfg.api.cookieSecure)(EntityLimiter.httpApp(ErrorHandling.Custom.recoverWith(all.orNotFound)(handler), 2L * 1024 * 1024))
+        _ <- EmberServerBuilder.default[IO]
+               .withHost(ipv4"0.0.0.0")
+               .withPort(Port.fromInt(cfg.port).getOrElse(port"8080"))
+               .withShutdownTimeout(5.seconds)
+               .withHttpApp(httpApp)
+               .build
+        _ <- cfg.tls.traverse_ { t =>
+               // クライアント証明書を求める（提示しなくても接続はできる. 証明書でのログインのときだけ使う）
+               Resource.eval(Network[IO].tlsContext.fromKeyStoreFile(fs2.io.file.Path(t.keystore), t.password.toCharArray, t.password.toCharArray))
+                 .flatMap(ctx => EmberServerBuilder.default[IO].withHost(ipv4"0.0.0.0").withPort(Port.fromInt(t.port).getOrElse(port"8443"))
+                   .withTLS(ctx, TLSParameters(wantClientAuth = true)).withShutdownTimeout(5.seconds).withHttpApp(httpApp).build)
+                 .evalTap(_ => IO.println(s"[sruru] listening on :${t.port} (TLS, client certificates)"))
+             }
+        _ <- Resource.eval(IO.println(s"[sruru] listening on :${cfg.port} (${cfg.api.publicUrl})"))
+      yield ()).useForever
+    yield ()
+
+  /** DB（Patroni のプライマリ）が使えるまで待ってからマイグレーションする. 複数ノード同時起動でも Flyway のロックで1回だけ適用される. */
+  private def migrateWithRetry(cfg: AppConfig, attempt: Int = 1): IO[Int] =
+    Database.migrate(cfg.db).handleErrorWith { e =>
+      if attempt >= 60 then IO.raiseError(e)
+      else IO.println(s"[sruru] database not ready (${e.getMessage.take(120)}); retry $attempt/60") *> IO.sleep(2.seconds) *> migrateWithRetry(cfg, attempt + 1)
+    }
+
+  private def setupNotice(login: LoginRoutes): IO[Unit] =
+    login.setupToken.flatMap(_.traverse_(t =>
+      IO.println(s"[sruru] 管理者がいません。画面の /setup で最初の管理者を作ってください。セットアップのトークン: $t")))
+
+  /** ロードバランサー用のヘルスチェック. DB（プライマリ）に書けない状態なら 503. */
+  private def healthRoutes(xa: doobie.Transactor[IO], node: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case GET -> Root / "healthz" =>
+      sql"select not pg_is_in_recovery()".query[Boolean].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
+        case Right(true)  => text(Status.Ok, s"ok $node")
+        case Right(false) => text(Status.ServiceUnavailable, "database is read-only (not primary)")
+        // 例外の内容は認証なしの応答に出さず、ログにだけ残す
+        case Left(e)      => IO.println(s"[sruru] healthz: ${e.getMessage}") *> text(Status.ServiceUnavailable, "database unavailable")
+      }
+  }
+
+  private def text(status: Status, body: String): IO[Response[IO]] =
+    IO.pure(Response[IO](status).withEntity(body)(using EntityEncoder.stringEncoder))
+
+  private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
+    case _: EntityLimiter.EntityTooLarge => IO.pure(Response[IO](Status.PayloadTooLarge).withEntity(ErrorDto("送られたデータが大きすぎます")))
+    case e =>
+    IO.println(s"[sruru] unhandled error: $e") *> InternalServerError(ErrorDto("サーバーでエラーが発生しました"))
+  }
+
+  /** すべての応答に付けるヘッダー（埋め込み・MIME の推測の禁止）. 画面には CSP も付ける. */
+  private def securityHeaders(https: Boolean)(app: HttpApp[IO]): HttpApp[IO] = HttpApp[IO] { req =>
+    app.run(req).map { r =>
+      val base0 = r.putHeaders("X-Content-Type-Options" -> "nosniff", "Referrer-Policy" -> "strict-origin-when-cross-origin",
+        "X-Frame-Options" -> "DENY")
+      // 公開の URL が https なら、以後 http で接続させない（Cookie の盗み見・SSL ストリップを防ぐ）
+      val base = if https then base0.putHeaders("Strict-Transport-Security" -> "max-age=31536000; includeSubDomains") else base0
+      val html = r.contentType.exists(_.mediaType == MediaType.text.html)
+      if html && r.headers.get(org.typelevel.ci.CIString("Content-Security-Policy")).isEmpty then
+        base.putHeaders("Content-Security-Policy" ->
+          "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:")
+      else base
+    }
+  }
+
+  /** 期限切れのセッション・トークン・監査ログの掃除（1時間ごと. 1ノードだけ）. */
+  private def purgeLoop(sessions: SessionStore, dir: Directory, tokens: TokenStore, factors: FactorStore, audit: AuditStore, mails: MailStore,
+      settings: SettingsStore, policies: PolicyService, lock: JobLock): IO[Unit] =
+    Loops.every(2.minutes, 1.hour, "purge")(lock.exclusive("purge", 50.minutes) {
+      for
+        now <- IO.realTimeInstant
+        p   <- policies.get
+        // 消したログインは、トークンの失効とバックチャネルの通知まで行う（自動で終わったログインのトークンを残さない）
+        ended <- sessions.purgeLogins(now)
+        _   <- ended.traverse_((lid, uid) => dir.endLogin(uid, lid))
+        // 無操作の時間はユーザーごと（グループの上書き）. 全体とグループのうち最も短い時間を過ぎたものを候補にして、ユーザーごとに判定する
+        gs  <- dir.groups.all
+        idles = (p.session.idleMinutes :: gs.flatMap(_.policy.flatMap(_.session.idleMinutes))).filter(_ > 0)
+        cand <- idles.minOption.fold(IO.pure(List.empty[(java.util.UUID, java.util.UUID, java.time.Instant)]))(mi => sessions.idleLogins(now.minusSeconds(mi.toLong * 60)))
+        _   <- cand.groupBy(_._2).toList.traverse_ { (uid, ls) =>
+                 dir.users.find(uid).flatMap(_.traverse_(u => dir.policyFor(u).flatMap { up =>
+                   ls.filter(l => up.session.idleMinutes > 0 && l._3.plusSeconds(up.session.idleMinutes.toLong * 60).isBefore(now))
+                     .traverse_(l => sessions.deleteLogin(l._1).flatMap(_.traverse_(_ => dir.endLogin(uid, l._1))))
+                 }))
+               }
+        _   <- sessions.purgeExpired(now)
+        _   <- tokens.purge(now)
+        _   <- factors.purgeThrottle(now.minusSeconds(86400))
+        _   <- factors.purgeEmailTokens(now)
+        _   <- mails.purge(now.minusSeconds(30L * 86400))
+        // 全体・グループのどこからも使われていないロゴ（上げてから1日たったもの）
+        logos = (p.branding.logo.toList ++ gs.flatMap(_.policy.flatMap(_.branding.logo))).flatMap(l => scala.util.Try(java.util.UUID.fromString(l)).toOption)
+        _   <- settings.purgeLogos(logos.toSet, now.minusSeconds(86400))
+        _   <- IO.whenA(p.audit.retentionDays > 0)(audit.purge(now.minusSeconds(p.audit.retentionDays.toLong * 86400)).void)
+      yield ()
+    })
+
+  /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
+  private def spa(dir: String): HttpRoutes[IO] =
+    val files = fileService[IO](FileService.Config(dir))
+    val index = HttpRoutes.of[IO] {
+      case req @ GET -> _ if !backendPrefixes.contains(req.pathInfo.segments.headOption.map(_.decoded()).getOrElse("")) =>
+        StaticFile.fromPath(Path(dir) / "index.html", Some(req)).getOrElseF(NotFound())
+    }
+    HttpRoutes[IO] { req =>
+      val cc = if req.pathInfo.renderString.startsWith("/assets/") then "public, max-age=31536000, immutable" else "no-cache"
+      (files <+> index).run(req).map(_.putHeaders("Cache-Control" -> cc))
+    }
