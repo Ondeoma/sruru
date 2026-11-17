@@ -153,12 +153,15 @@ trait RouteSupport extends Http4sDsl[IO]:
     auth.principal(req).flatMap {
       case None => err(Status.Unauthorized, "ログインしてください")
       case Some(p) =>
-        val write = !Set(Method.GET, Method.HEAD, Method.OPTIONS).contains(req.method)
-        if write && !p.canWrite then err(Status.Forbidden, "このトークンは参照専用です（write スコープが必要です）")
-        else if !write && !p.canRead then err(Status.Forbidden, "このトークンでは使えません（read スコープが必要です）")
-        else if write && p.via.isInstanceOf[Via.Web] && req.headers.get(CIString("X-Sruru")).isEmpty then
-          err(Status.Forbidden, "不正な要求です（X-Sruru ヘッダーがありません）")
-        else f(p)
+        // 操作したユーザーを、トレース（スパンの属性）とこの中のログに載せる
+        sruru.observe.Telemetry.withUser(p.id.toString, p.user.username) {
+          val write = !Set(Method.GET, Method.HEAD, Method.OPTIONS).contains(req.method)
+          if write && !p.canWrite then err(Status.Forbidden, "このトークンは参照専用です（write スコープが必要です）")
+          else if !write && !p.canRead then err(Status.Forbidden, "このトークンでは使えません（read スコープが必要です）")
+          else if write && p.via.isInstanceOf[Via.Web] && req.headers.get(CIString("X-Sruru")).isEmpty then
+            err(Status.Forbidden, "不正な要求です（X-Sruru ヘッダーがありません）")
+          else f(p)
+        }
     }
 
   /**
@@ -218,12 +221,22 @@ final class PolicyService(settings: SettingsStore, cache: Ref[IO, Option[(Long, 
 object PolicyService:
   def create(settings: SettingsStore): IO[PolicyService] = Ref.of[IO, Option[(Long, PoliciesDto)]](None).map(new PolicyService(settings, _))
 
-/** 監査ログの書き込み. */
-final class AuditService(store: AuditStore):
+/**
+ * 監査ログの書き込み. 認証・アカウントの出来事はすべてここを通るので、業務のメトリクス（AuditMetrics）と、
+ * 本人へのプッシュ通知（アカウントの安全にかかわる出来事）もここで出す.
+ */
+final class AuditService(store: AuditStore, push: Option[sruru.push.PushService] = None):
   def log(c: ReqCtx, actor: Option[User], via: String, action: String, target: Option[(String, String, String)] = None,
       success: Boolean = true, detail: Json = Json.obj()): IO[Unit] =
     store.append(AuditEntry(actor.map(_.id), actor.map(_.username), via, action, target.map(_._1), target.map(_._2), target.map(_._3),
-      Some(c.ip), c.userAgent, success, detail)).void.handleErrorWith(e => IO.println(s"[sruru] audit write failed: $e"))
+      Some(c.ip), c.userAgent, success, detail)).void.handleErrorWith(e => sruru.observe.Log.println(s"[sruru] audit write failed: $e")) *>
+      AuditMetrics.record(action, via, success, detail) *>
+      IO.whenA(success)(notifyUser(action, target))
+
+  /** 本人へのプッシュ通知（PWA）. 秘密の値（コード・リンク）は載せず、出来事と確かめる画面だけを知らせる. */
+  private def notifyUser(action: String, target: Option[(String, String, String)]): IO[Unit] =
+    (push, target.collect { case ("user", id, _) => id }.flatMap(id => scala.util.Try(UUID.fromString(id)).toOption), AuditMetrics.alert(action)).tupled
+      .traverse_ { case (ps, uid, (title, body)) => ps.send(uid, sruru.push.PushMessage(title, body, "/me/security", Some(action))).start.void }
 
   def byPrincipal(c: ReqCtx, p: Principal, action: String, target: Option[(String, String, String)] = None, success: Boolean = true,
       detail: Json = Json.obj()): IO[Unit] =
@@ -232,6 +245,51 @@ final class AuditService(store: AuditStore):
   def userTarget(u: User): Option[(String, String, String)] = Some(("user", u.id.toString, u.username))
   def groupTarget(g: Group): Option[(String, String, String)] = Some(("group", g.id.toString, g.name))
   def appTarget(a: Application): Option[(String, String, String)] = Some(("application", a.id.toString, a.slug))
+
+/**
+ * 監査ログの出来事から数える業務のメトリクス（skorimako）. 属性は種類の決まった値だけ（ユーザー名・理由の文などは載せない）.
+ *  - sruru.logins: ログイン（result = success・failure・locked. mfa = 2つ目の要素を使ったか）
+ *  - sruru.logins.mfa: 2つ目の要素（method = totp・email・recovery. result）
+ *  - sruru.logins.federation・sruru.logins.cert: 外部の IdP・クライアント証明書でのログイン（result）
+ *  - sruru.password.changes・sruru.password.resets: パスワードの変更（by = self・admin）・再設定（step = request・reset）
+ *  - sruru.audit.events: 監査ログのすべての出来事（action・result）
+ */
+object AuditMetrics:
+  import sruru.observe.Metrics
+
+  private val MfaMethods = Set("totp", "email", "recovery")
+
+  /** 2つ目の要素の種類（メトリクス・スパンの属性. 送られてきた値なので決まったもの以外は other）. */
+  def mfaMethod(m: String): String = if MfaMethods(m) then m else "other"
+
+  private def res(ok: Boolean) = if ok then "success" else "failure"
+
+  def record(action: String, via: String, success: Boolean, detail: Json): IO[Unit] =
+    val specific: IO[Unit] = action match
+      case "login.success" =>
+        val amr = detail.hcursor.get[List[String]]("amr").getOrElse(Nil)
+        Metrics.count("sruru.logins", "result" -> "success", "mfa" -> amr.contains(Amr.Mfa).toString)
+      case "login.failure" => Metrics.count("sruru.logins", "result" -> "failure")
+      case "user.locked"   => Metrics.count("sruru.logins", "result" -> "locked")
+      case "login.mfa" =>
+        Metrics.count("sruru.logins.mfa", "method" -> mfaMethod(detail.hcursor.get[String]("method").getOrElse("")), "result" -> res(success))
+      case "login.federation" => Metrics.count("sruru.logins.federation", "result" -> res(success))
+      case "login.cert"       => Metrics.count("sruru.logins.cert", "result" -> res(success))
+      case "user.password.change" | "user.password.set" =>
+        Metrics.count("sruru.password.changes", "by" -> (if action == "user.password.set" then "admin" else "self"), "result" -> res(success))
+      case "user.password.reset_request" => Metrics.count("sruru.password.resets", "step" -> "request", "result" -> res(success))
+      case "user.password.reset"         => Metrics.count("sruru.password.resets", "step" -> "reset", "result" -> res(success))
+      case _ => IO.unit
+    specific *> Metrics.count("sruru.audit.events", "action" -> action, "via" -> via, "result" -> res(success))
+
+  /** 本人にプッシュで知らせる出来事（題名・本文）. */
+  def alert(action: String): Option[(String, String)] = action match
+    case "user.password.change" => Some(("パスワードが変更されました", "心当たりがなければ、すぐに管理者に連絡してください"))
+    case "user.password.set"    => Some(("管理者がパスワードを設定しました", "次のログインから新しいパスワードを使ってください"))
+    case "user.password.reset"  => Some(("パスワードを再設定しました", "心当たりがなければ、すぐに管理者に連絡してください"))
+    case "user.locked"          => Some(("アカウントがロックされました", "ログインの失敗が続いたため、しばらくログインできません"))
+    case "mfa.totp.remove" | "mfa.reset" => Some(("2段階認証が解除されました", "心当たりがなければ、すぐに管理者に連絡してください"))
+    case _ => None
 
 /** 定期処理（失敗しても止めない）. */
 object Loops:

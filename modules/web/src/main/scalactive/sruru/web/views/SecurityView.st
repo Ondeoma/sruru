@@ -6,7 +6,7 @@ import sruru.web.parts.*
 
 import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 
-// 個人設定: セキュリティ（パスワード・2段階認証・証明書・ログインしている端末・許可したアプリ・画面の色）
+// 個人設定: セキュリティ（パスワード・2段階認証・証明書・通知（プッシュ）・ログインしている端末・許可したアプリ・画面の色）
 case class State(current: RV[String] = RV(""), next: RV[String] = RV(""), next2: RV[String] = RV(""), pwError: RV[String] = RV(""),
                  pwBusy: RV[Boolean] = RV(false),
                  totp: RV[Option[TotpSetupDto]] = RV(None), totpName: RV[String] = RV("認証アプリ"), totpCode: RV[String] = RV(""),
@@ -176,6 +176,12 @@ def others(s: State) = s.sessions.mapC(_.exists(!_.current))
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2>通知</h2>
+        <p class="small muted">パスワードの変更・2段階認証の解除・アカウントのロックなど、アカウントの安全にかかわる出来事を、この端末に通知します。</p>
+        <p><PushToggle /></p>
       </section>
 
       <section class="panel">

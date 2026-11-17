@@ -159,7 +159,8 @@ final class LoginRoutes(login: LoginService, fed: FederationService, fedStore: F
                         case Some(p) if p.enabled =>
                           // 同じ state を2回使えないように消す
                           sessions.saveFlow(f.copy(data = f.data.mapObject(_.remove("fed")))) *>
-                            fed.exchange(p, req.params.getOrElse("code", ""), verifier, nonce).attempt.flatMap {
+                            // 外部の IdP とのコードの交換（スパンには IdP の名前だけ. コード・トークンは載せない）
+                            sruru.observe.Telemetry.span("federation.exchange", "provider" -> p.slug)(fed.exchange(p, req.params.getOrElse("code", ""), verifier, nonce)).attempt.flatMap {
                               case Left(e) =>
                                 login.externalFailed(c, None, "login.federation", s"${p.slug}: ${e.getMessage}") *>
                                   afterExternal(fid, Left(Fail.Unauthorized(s"${p.name} でのログインに失敗しました: ${e.getMessage}")))

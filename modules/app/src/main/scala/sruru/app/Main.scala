@@ -17,6 +17,7 @@ import org.http4s.server.staticcontent.*
 import sruru.api.*
 import sruru.db.*
 import sruru.notify.{SmtpConfig, SmtpMailer}
+import sruru.observe.{HttpClientTelemetry, HttpTelemetry, Metrics, RumRoutes, Telemetry}
 import sruru.security.SecretBox
 import sruru.shared.ErrorDto
 
@@ -82,19 +83,31 @@ object Config:
 
 object Main extends IOApp.Simple:
 
+  // ログにトレースの ID・操作したユーザーを載せるため、IOLocal の文脈を Java のライブラリから見えるようにする
+  // （IORuntime を作る前に設定する必要がある. オブジェクトの初期化は main より先に動く）
+  Telemetry.prepare()
+
+  private val version = Option(getClass.getPackage.getImplementationVersion).orElse(sys.env.get("APP_VERSION")).getOrElse("dev")
+
   private given org.typelevel.log4cats.LoggerFactory[IO] = org.typelevel.log4cats.slf4j.Slf4jFactory.create[IO]
 
   /** バックエンドのパス（画面の index.html を返さない）. */
   private val backendPrefixes = Set("api", "auth", "oauth2", "saml", "scim", "mcp", ".well-known", "avatars", "app-icons", "brand-logos", "healthz")
 
+  /** トレース・メトリクス・アクセスログの対象（画像・/healthz は除く）. クエリ（?code=・?state=・SAMLRequest）は記録しない. */
+  private val tracedPrefixes = List("/api", "/auth", "/oauth2", "/saml", "/scim", "/mcp", "/.well-known")
+
   def run: IO[Unit] =
     for
       cfg <- Config.load
       n   <- migrateWithRetry(cfg)
-      _   <- IO.println(s"[sruru] database migrated ($n migration(s) applied); node ${cfg.api.nodeId}")
+      _   <- sruru.observe.Log.println(s"[sruru] database migrated ($n migration(s) applied); node ${cfg.api.nodeId}")
       _ <- (for
+        _    <- Telemetry.resource("sruru", version, runtime)
         xa   <- Database.transactor(cfg.db)
-        http <- EmberClientBuilder.default[IO].withTimeout(30.seconds).withMaxResponseHeaderSize(64 * 1024).build   // 大きなヘッダーを返すサイトもある
+        _    <- gauges(xa)
+        // 大きなヘッダーを返すサイトもある. 外への呼び出し（外部の IdP・バックチャネルログアウト・プッシュ）もトレースに出す（traceparent を付けて送る）
+        http <- EmberClientBuilder.default[IO].withTimeout(30.seconds).withMaxResponseHeaderSize(64 * 1024).build.map(HttpClientTelemetry(_))
         box   = new SecretBox(cfg.appSecret)
         users      = new UserStore(xa)
         groups     = new GroupStore(xa)
@@ -110,7 +123,9 @@ object Main extends IOApp.Simple:
         policies <- Resource.eval(PolicyService.create(settings))
         keys     <- Resource.eval(KeyService.create(tokens, box, "sruru"))
         _        <- Resource.eval(keys.ensure)
-        audit     = new AuditService(auditStore)
+        pushStore = new sruru.push.PushStore(xa)
+        push     <- Resource.eval(sruru.push.PushService.create(pushStore, http, cfg.api.publicUrl, "sruru"))
+        audit     = new AuditService(auditStore, Some(push))
         mail      = new MailService(mails, cfg.smtp.map(new SmtpMailer(_)), cfg.api)
         notifier  = new LogoutNotifier(apps, tokens, keys, http, cfg.api)
         dir       = new Directory(users, groups, factors, sessions, tokens, policies, notifier, cfg.api)
@@ -135,11 +150,12 @@ object Main extends IOApp.Simple:
                 )
         _ <- loops.traverse_(_.background)
         rest = healthRoutes(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+> saml.routes <+>
-                 resume.routes <+> scim.routes
+                 resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
         app  = rest <+> new McpRoutes(rest, auth, cfg.api).routes
         all  = cfg.staticDir.fold(app)(d => app <+> spa(d))
         // 本文は 2MB まで（画像は 512KB まで. それより大きな要求で資源を使い切らないように）
-        httpApp = securityHeaders(cfg.api.cookieSecure)(EntityLimiter.httpApp(ErrorHandling.Custom.recoverWith(all.orNotFound)(handler), 2L * 1024 * 1024))
+        httpApp <- HttpTelemetry(securityHeaders(cfg.api.cookieSecure)(EntityLimiter.httpApp(ErrorHandling.Custom.recoverWith(all.orNotFound)(handler), 2L * 1024 * 1024)),
+                     tracedPrefixes)
         _ <- EmberServerBuilder.default[IO]
                .withHost(ipv4"0.0.0.0")
                .withPort(Port.fromInt(cfg.port).getOrElse(port"8080"))
@@ -151,9 +167,9 @@ object Main extends IOApp.Simple:
                Resource.eval(Network[IO].tlsContext.fromKeyStoreFile(fs2.io.file.Path(t.keystore), t.password.toCharArray, t.password.toCharArray))
                  .flatMap(ctx => EmberServerBuilder.default[IO].withHost(ipv4"0.0.0.0").withPort(Port.fromInt(t.port).getOrElse(port"8443"))
                    .withTLS(ctx, TLSParameters(wantClientAuth = true)).withShutdownTimeout(5.seconds).withHttpApp(httpApp).build)
-                 .evalTap(_ => IO.println(s"[sruru] listening on :${t.port} (TLS, client certificates)"))
+                 .evalTap(_ => sruru.observe.Log.println(s"[sruru] listening on :${t.port} (TLS, client certificates)"))
              }
-        _ <- Resource.eval(IO.println(s"[sruru] listening on :${cfg.port} (${cfg.api.publicUrl})"))
+        _ <- Resource.eval(sruru.observe.Log.println(s"[sruru] listening on :${cfg.port} (${cfg.api.publicUrl})"))
       yield ()).useForever
     yield ()
 
@@ -161,10 +177,23 @@ object Main extends IOApp.Simple:
   private def migrateWithRetry(cfg: AppConfig, attempt: Int = 1): IO[Int] =
     Database.migrate(cfg.db).handleErrorWith { e =>
       if attempt >= 60 then IO.raiseError(e)
-      else IO.println(s"[sruru] database not ready (${e.getMessage.take(120)}); retry $attempt/60") *> IO.sleep(2.seconds) *> migrateWithRetry(cfg, attempt + 1)
+      else sruru.observe.Log.println(s"[sruru] database not ready (${e.getMessage.take(120)}); retry $attempt/60") *> IO.sleep(2.seconds) *> migrateWithRetry(cfg, attempt + 1)
     }
 
+  /** DB から定期的に読むメトリクス（skorimako のダッシュボード・アラート用）. */
+  private def gauges(xa: doobie.Transactor[IO]): Resource[IO, Unit] =
+    def q(sqlText: doobie.Fragment): IO[Long] = sqlText.query[Long].unique.transact(xa)
+    List(
+      Metrics.gauge("sruru.users.active", "有効なユーザーの数（サービスアカウントを除く）")(q(sql"select count(*) from users where not disabled and not is_service")),
+      Metrics.gauge("sruru.users.locked", "ロック中のユーザーの数")(q(sql"select count(*) from users where locked_until > now()")),
+      Metrics.gauge("sruru.users.active_24h", "24時間以内にログインしたユーザーの数")(q(sql"select count(*) from users where last_login_at > now() - interval '24 hours'")),
+      Metrics.gauge("sruru.apps.enabled", "有効なアプリケーションの数")(q(sql"select count(*) from applications where enabled")),
+      Metrics.gauge("sruru.sessions.active", "有効なログイン（セッション）の数")(q(sql"select count(*) from logins where expires_at > now()")),
+      Metrics.gauge("sruru.mail.outbox", "送信待ちのメールの数")(q(sql"select count(*) from mail_outbox where sent_at is null and attempts < 10"))
+    ).sequence_
+
   private def setupNotice(login: LoginRoutes): IO[Unit] =
+    // セットアップのトークンは秘密の値なので、ロガー（OTLP で skorimako に送られる）を通さず標準出力にだけ出す
     login.setupToken.flatMap(_.traverse_(t =>
       IO.println(s"[sruru] 管理者がいません。画面の /setup で最初の管理者を作ってください。セットアップのトークン: $t")))
 
@@ -175,7 +204,7 @@ object Main extends IOApp.Simple:
         case Right(true)  => text(Status.Ok, s"ok $node")
         case Right(false) => text(Status.ServiceUnavailable, "database is read-only (not primary)")
         // 例外の内容は認証なしの応答に出さず、ログにだけ残す
-        case Left(e)      => IO.println(s"[sruru] healthz: ${e.getMessage}") *> text(Status.ServiceUnavailable, "database unavailable")
+        case Left(e)      => sruru.observe.Log.println(s"[sruru] healthz: ${e.getMessage}") *> text(Status.ServiceUnavailable, "database unavailable")
       }
   }
 
@@ -185,8 +214,11 @@ object Main extends IOApp.Simple:
   private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
     case _: EntityLimiter.EntityTooLarge => IO.pure(Response[IO](Status.PayloadTooLarge).withEntity(ErrorDto("送られたデータが大きすぎます")))
     case e =>
-    IO.println(s"[sruru] unhandled error: $e") *> InternalServerError(ErrorDto("サーバーでエラーが発生しました"))
+    IO(org.slf4j.LoggerFactory.getLogger("sruru").error("unhandled error", e)) *> InternalServerError(ErrorDto("サーバーでエラーが発生しました"))
   }
+
+  /** RUM の読み込み先（CSP の script-src・connect-src に足す. 未設定なら足さない）. */
+  private lazy val rumOrigin: Option[String] = RumRoutes.origin
 
   /** すべての応答に付けるヘッダー（埋め込み・MIME の推測の禁止）. 画面には CSP も付ける. */
   private def securityHeaders(https: Boolean)(app: HttpApp[IO]): HttpApp[IO] = HttpApp[IO] { req =>
@@ -197,8 +229,11 @@ object Main extends IOApp.Simple:
       val base = if https then base0.putHeaders("Strict-Transport-Security" -> "max-age=31536000; includeSubDomains") else base0
       val html = r.contentType.exists(_.mediaType == MediaType.text.html)
       if html && r.headers.get(org.typelevel.ci.CIString("Content-Security-Policy")).isEmpty then
+        // 画面のブラウザの観測（skorimako の RUM）はログインした後の画面だけで読む. ログイン・同意・パスワードの再設定などの画面では
+        // 外部のスクリプトを許さない（画面の Observe もその画面で開いたページでは読み込まない）
+        val rum = rumOrigin.filterNot(_ => sruru.shared.Pages.isPublic(req.pathInfo.renderString)).fold("")(" " + _)
         base.putHeaders("Content-Security-Policy" ->
-          "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:")
+          s"default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'$rum; connect-src 'self'$rum; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:")
       else base
     }
   }

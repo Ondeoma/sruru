@@ -108,13 +108,15 @@ final class SamlRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
           (keys.saml, Time.now).flatMapN { (k, now) =>
             val xml   = Saml.buildErrorResponse(entityId, s.acsUrl, inResp, status, sub, Some(msg), now, k.privateKey, k.cert.get)
             val nonce = Crypto.randomToken(12)
-            tokens.deleteRequest(r.id) *> html(Saml.postForm(s.acsUrl, "SAMLResponse", xml, relay, nonce), nonce)
+            sruru.observe.Metrics.count("sruru.saml.assertions", "result" -> "error") *>
+              tokens.deleteRequest(r.id) *> html(Saml.postForm(s.acsUrl, "SAMLResponse", xml, relay, nonce), nonce)
           }
         gate.check(req, r, app, GateOpts(force, passive, None, false)).flatMap {
           case Gate.Interact(_, _) if passive => errorToSp(Saml.StatusResponder, Some("urn:oasis:names:tc:SAML:2.0:status:NoPassive"), "ログインが必要です")
           case Gate.Interact(path, _) => gate.redirect(path)
           case Gate.Deny(_, msg) => tokens.deleteRequest(r.id) *> gate.errorPage(msg)
-          case Gate.Proceed(_, login, u, m) =>
+          // スパン・メトリクスには SAML の応答（アサーション）・NameID を載せない
+          case Gate.Proceed(_, login, u, m) => sruru.observe.Telemetry.span("saml.assertion", "app" -> app.slug)(
             for
               pic  <- dir.picture(u)
               ms   <- apps.mappings(app.id)
@@ -135,8 +137,9 @@ final class SamlRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
                   val nonce = Crypto.randomToken(12)
                   tokens.deleteRequest(r.id) *>
                     audit.log(c, Some(u), "saml", "app.authorize", audit.appTarget(app), detail = Json.obj("nameId" -> nid.asJson)) *>
+                    sruru.observe.Metrics.count("sruru.saml.assertions", "result" -> "issued") *>
                     html(Saml.postForm(s.acsUrl, "SAMLResponse", xml, relay, nonce), nonce)
-            yield res
+            yield res)
         }
       case _ => gate.errorPage("アプリケーションが見つかりません")
     }

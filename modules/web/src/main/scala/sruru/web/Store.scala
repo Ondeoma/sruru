@@ -118,13 +118,37 @@ object Dom {
 
 }
 
-/** 画像（アイコン）の補助. frontend/src/image.js. */
+/** 画像（アイコン）の補助. */
 object Img {
+
+  /**
+   * 画像を中央で正方形に切り取り、size px に縮めて PNG の Blob にする（アイコンの登録用）.
+   * 読めない画像（アニメーション GIF の一部など）は元のファイルをそのまま返す.
+   */
+  def squareThumb(file: dom.File, size: Int = 256): Future[dom.Blob] = {
+    val p = scala.concurrent.Promise[dom.Blob]()
+    val url = dom.URL.createObjectURL(file)
+    val img = dom.document.createElement("img").asInstanceOf[dom.HTMLImageElement]
+    img.onload = (_: dom.Event) => {
+      val s = math.min(img.naturalWidth, img.naturalHeight)
+      val canvas = dom.document.createElement("canvas").asInstanceOf[dom.HTMLCanvasElement]
+      canvas.width = math.min(size, s)
+      canvas.height = canvas.width
+      val ctx = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+      ctx.asInstanceOf[js.Dynamic].imageSmoothingQuality = "high"
+      ctx.drawImage(img, (img.naturalWidth - s) / 2.0, (img.naturalHeight - s) / 2.0, s, s, 0, 0, canvas.width, canvas.height)
+      dom.URL.revokeObjectURL(url)
+      // scalajs-dom に toBlob の定義がないので、DOM のメソッドをそのまま呼ぶ
+      canvas.asInstanceOf[js.Dynamic].toBlob((b: dom.Blob) => p.success(if (b == null) file else b), "image/png")
+    }
+    img.addEventListener("error", (_: dom.Event) => { dom.URL.revokeObjectURL(url); p.success(file) })
+    img.src = url
+    p.future
+  }
 
   /** 正方形に切り取って 256px に縮め、本文として送る. */
   def upload(url: String, file: dom.File): Future[Unit] = {
-    val thumb = dom.window.asInstanceOf[js.Dynamic].sruruImage.squareThumb(file, 256).asInstanceOf[js.Promise[dom.Blob]].toFuture
-    thumb.flatMap { b =>
+    squareThumb(file).flatMap { b =>
       val ct = Option(b.`type`).filter(_.nonEmpty).getOrElse("image/png")
       Api.postRawUnit(url, b, ct)
     }

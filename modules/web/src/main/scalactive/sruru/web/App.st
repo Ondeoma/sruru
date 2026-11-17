@@ -35,19 +35,18 @@ val routes: PathPatternRoutes = List(
 )
 
 /** ヘッダーを出さない画面（ログイン前でも開く）. */
-def publicPath(href: String): Boolean = {
-  val p = new dom.URL(href).pathname
-  p == "/verify-email" || Api.loginPages.exists(x => p == x || p.startsWith(x + "/"))
-}
+def publicPath(href: String): Boolean = Pages.isPublic(new dom.URL(href).pathname)
 
 def isPublic = Router.href.mapC(publicPath)
 
-def loadMe(s: State): Unit = Store.report(Store.reloadMe()) { _ =>
+def loadMe(s: State): Unit = Store.report(Store.reloadMe()) { me =>
+  Observe.setUser(me.id.toString)
   Store.loadAccounts()
   s.ready := true
 }
 
 def mounted(s: State): Unit = {
+  Fallback.install(routes)
   Api.clientConfig().foreach { c =>
     Store.config := Some(c)
     if (c.setupRequired && dom.window.location.pathname != "/setup") Router.go("/setup")

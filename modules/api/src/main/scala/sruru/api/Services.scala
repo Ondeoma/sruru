@@ -44,7 +44,7 @@ final class KeyService(store: TokenStore, box: SecretBox, cache: Ref[IO, Option[
         case Some((at, ks)) if now.toMillis - at < 60000 => IO.pure(ks)
         case _ =>
           store.keys.map(_.filter(_.retiredAt.isEmpty).flatMap(k => decode(k).map(k -> _))).flatTap { ks =>
-            IO.whenA(ks.isEmpty)(IO.println("[sruru] WARNING: 署名鍵を復号できません（APP_SECRET が違う可能性があります）")) *>
+            IO.whenA(ks.isEmpty)(sruru.observe.Log.println("[sruru] WARNING: 署名鍵を復号できません（APP_SECRET が違う可能性があります）")) *>
               cache.set(Some(now.toMillis -> ks))
           }
     }
@@ -78,14 +78,16 @@ final class MailService(store: MailStore, mailer: Option[Mailer], cfg: ApiConfig
   def send(to: String, subject: String, body: String): IO[Unit] =
     mailer match
       case Some(_) => store.enqueue(to, subject, body)
-      // 本文にはワンタイムコードなどが入るので、ログに出すのは開発用のときだけ
+      // 本文にはワンタイムコードなどが入るので、出すのは開発用のときだけ. それも標準出力だけにする（ロガーを通すと OTLP で skorimako に送られる）
       case None if cfg.devMode => IO.println(s"[sruru] mail (SMTP 未設定のため送信しません) to=$to subject=$subject\n$body")
-      case None                => IO.println(s"[sruru] WARNING: SMTP が未設定のため、メールを送れません（to=$to）")
+      case None                => sruru.observe.Log.println(s"[sruru] WARNING: SMTP が未設定のため、メールを送れません（to=$to）")
 
   def loop: IO[Nothing] =
     Loops.every(5.seconds, 5.seconds, "mail") {
       mailer.fold(IO.unit)(m =>
-        store.process(20)(om => m.send(Mail(om.to, om.to, om.subject, om.body)).as(OutboxResult.Sent).handleError(e => OutboxResult.Retry(e.getMessage))).void)
+        store.process(20)(om => sruru.observe.Telemetry.span("mail.send")(m.send(Mail(om.to, om.to, om.subject, om.body))).as(OutboxResult.Sent)
+          .flatTap(_ => sruru.observe.Metrics.count("sruru.mails.sent", "result" -> "sent"))
+          .handleErrorWith(e => sruru.observe.Metrics.count("sruru.mails.sent", "result" -> "retry").as(OutboxResult.Retry(e.getMessage)))).void)
     }
 
 object Directory:

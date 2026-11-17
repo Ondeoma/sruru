@@ -124,7 +124,7 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
     }
 
   /** 失敗を記録する（IP ごとの回数・ユーザーのロック・監査ログ）. */
-  private def failed(c: ReqCtx, u: Option[User], action: String, reason: String): IO[Unit] =
+  private def failed(c: ReqCtx, u: Option[User], action: String, reason: String, extra: Json = Json.obj()): IO[Unit] =
     for
       p   <- policies.get
       now <- Time.now
@@ -138,7 +138,7 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
                    audit.log(c, Some(x), "web", "user.locked", audit.userTarget(x), detail = Json.obj("failures" -> n.asJson)))
                }
              }
-      _   <- audit.log(c, u, "web", action, u.flatMap(audit.userTarget), success = false, detail = Json.obj("reason" -> reason.asJson))
+      _   <- audit.log(c, u, "web", action, u.flatMap(audit.userTarget), success = false, detail = Json.obj("reason" -> reason.asJson).deepMerge(extra))
     yield ()
 
   private def precheck(c: ReqCtx): IO[Option[Fail]] =
@@ -150,7 +150,8 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
 
   private def sessionsIp(c: ReqCtx): IO[Boolean] = policies.get.map(p => IpRules.allowedBy(c.ip, p.ip))
 
-  def password(c: ReqCtx, bs: BrowserSession, req: PasswordLoginReq): Res[FlowDto] =
+  // スパンにはユーザー名・パスワードを載せない（結果は監査ログ → AuditMetrics で数える）
+  def password(c: ReqCtx, bs: BrowserSession, req: PasswordLoginReq): Res[FlowDto] = sruru.observe.Telemetry.span("login.password")(
     withFlow(bs, req.flowId) { f =>
       precheck(c).flatMap {
         case Some(e) => Res.fail(e)
@@ -182,7 +183,7 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
                 }
           yield res
       }
-    }
+    })
 
   // ------------------------------------------------------------------ 次の段階
 
@@ -230,7 +231,7 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
                ls.sortBy(_.lastSeenAt).headOption.traverse_(o => sessions.removeLogin(bs.id, o.userId).flatMap(_.traverse_(dir.endLogin(o.userId, _)))))
       l   <- sessions.upsertLogin(bs.id, u.id, f.amr, c.ip, c.userAgent, now.plusSeconds(p.session.lifetimeHours.toLong * 3600))
       _   <- dir.users.touchLogin(u.id)
-      _   <- dir.recomputeUser(u).handleErrorWith(e => IO.println(s"[sruru] dynamic groups: $e"))
+      _   <- dir.recomputeUser(u).handleErrorWith(e => sruru.observe.Log.println(s"[sruru] dynamic groups: $e"))
       _   <- audit.log(c, Some(u), "web", "login.success", audit.userTarget(u), detail = Json.obj("amr" -> f.amr.distinct.asJson,
                "requestId" -> f.authRequestId.map(_.toString).asJson))
       _   <- sessions.deleteFlow(f.id)
@@ -241,6 +242,7 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
   private def addMfa(f: LoginFlow, method: String): LoginFlow = f.copy(amr = (f.amr ++ List(method, Amr.Mfa)).distinct)
 
   def mfa(c: ReqCtx, bs: BrowserSession, req: MfaReq): Res[FlowDto] =
+    sruru.observe.Telemetry.span("login.mfa", "method" -> AuditMetrics.mfaMethod(req.method))(
     withFlow(bs, req.flowId) { f =>
       withUser(f) { u =>
         if f.stage != "mfa" then Res.invalid("この段階では使えません")
@@ -277,11 +279,11 @@ final class LoginService(dir: Directory, sessions: SessionStore, factors: Factor
                   audit.log(c, Some(u), "web", "login.mfa", audit.userTarget(u), detail = Json.obj("method" -> req.method.asJson)) *>
                     sessions.saveFlow(f2) *> advance(c, bs, f2, u).map(Right(_))
                 case None =>
-                  failed(c, Some(u), "login.mfa", s"wrong ${req.method} code").as(Left(Fail.Unauthorized("コードが違うか、有効期限が切れています")))
+                  failed(c, Some(u), "login.mfa", s"wrong ${req.method} code", Json.obj("method" -> req.method.take(20).asJson)).as(Left(Fail.Unauthorized("コードが違うか、有効期限が切れています")))
               }
           }
       }
-    }
+    })
 
   /** メールでワンタイムコードを送る. */
   def sendEmailCode(c: ReqCtx, bs: BrowserSession, flowId: UUID): Res[FlowDto] =

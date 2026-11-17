@@ -105,6 +105,10 @@ java -cp 'dist/lib/*' sruru.app.Main
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` / `SMTP_USER` / `SMTP_PASSWORD` / `MAIL_FROM` | メール（未設定ならメールは送らず、ログに出す） |
 | `TLS_KEYSTORE` / `TLS_KEYSTORE_PASSWORD` / `HTTPS_PORT` | sruru 自身で TLS を受ける（クライアント証明書を求める）。PKCS#12 |
 | `NODE_ID` | ノード名（ログ・定期処理のリース） |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | ログ・メトリクス・トレースの送り先（skorimako の URL と `Authorization=Bearer sko_…`（ingest のキー））。未設定なら送らない。そのほか OpenTelemetry の標準の `OTEL_*` が使える。パスワード・トークン・認可コード・SAML の応答・URL のクエリは送らない |
+| `LOG_FORMAT` / `LOG_LEVEL` | 標準出力のログの形（`text`（既定）・`json`）と水準（既定 `INFO`）。ログにはトレースの ID と操作したユーザーが付く |
+| `SKORIMAKO_RUM_TOKEN` / `SKORIMAKO_RUM_URL` / `SKORIMAKO_RUM_SAMPLE_RATE` | 画面のブラウザの観測（skorimako の RUM）。ログインした後の画面だけで読み込む（ログイン・同意・パスワードの再設定の画面では読まない）。トークンは skorimako の管理の画面で登録したアプリのもの。URL を省略すると `SKORIMAKO_URL` |
+| `VAPID_SUBJECT` | プッシュ通知（PWA. パスワードの変更・アカウントのロックなどを本人に知らせる）の連絡先（`mailto:…` か `https://…`。省略すると `PUBLIC_URL`）。VAPID の鍵は初回の起動で作って DB に保存する |
 | `DEV_MODE` | 開発用（`APP_SECRET` を省略できる）。本番では使わない |
 
 ポリシー（パスワード・ロック・多要素認証・セッション・IP 制限・クライアント証明書・表示・監査ログの保存期間）は管理画面の「ポリシー」で変えます。

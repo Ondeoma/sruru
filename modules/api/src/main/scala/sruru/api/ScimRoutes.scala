@@ -108,13 +108,18 @@ final class ScimRoutes(dir: Directory, sessions: SessionStore, tokens: TokenStor
     scim(status, Json.obj("schemas" -> List("urn:ietf:params:scim:api:messages:2.0:Error").asJson, "status" -> status.code.toString.asJson,
       "scimType" -> scimType.asJson, "detail" -> detail.asJson))
 
+  /** SCIM の要求の認証. 要求ごとにスパンと sruru.scim.requests（method・resource・status）を残す（本文は載せない）. */
   private def scimAuth(req: Request[IO])(f: Principal => IO[Response[IO]]): IO[Response[IO]] =
-    auth.principal(req).flatMap {
-      case Some(p) if p.canScim =>
-        auth.adminIpAllowed(req).ifM(f(p), scimErr(Status.Forbidden, "この IP アドレスからは SCIM を使えません"))
-      case Some(_)              => scimErr(Status.Forbidden, "scim スコープの API トークン（管理者）が必要です")
-      case None                 => scimErr(Status.Unauthorized, "API トークンが必要です")
-    }
+    val resource = req.pathInfo.segments.drop(2).headOption.map(_.decoded()).getOrElse("")
+    sruru.observe.Telemetry.span("scim.request", "scim.resource" -> resource)(
+      auth.principal(req).flatMap {
+        case Some(p) if p.canScim =>
+          sruru.observe.Telemetry.withUser(p.id.toString, p.user.username)(
+            auth.adminIpAllowed(req).ifM(f(p), scimErr(Status.Forbidden, "この IP アドレスからは SCIM を使えません")))
+        case Some(_)              => scimErr(Status.Forbidden, "scim スコープの API トークン（管理者）が必要です")
+        case None                 => scimErr(Status.Unauthorized, "API トークンが必要です")
+      }
+    ).flatTap(r => sruru.observe.Metrics.count("sruru.scim.requests", "method" -> req.method.name, "resource" -> resource, "status" -> r.status.code.toString))
 
   private def jsonBody(req: Request[IO])(f: Json => IO[Response[IO]]): IO[Response[IO]] =
     req.bodyText.compile.string.flatMap(s => io.circe.parser.parse(s) match

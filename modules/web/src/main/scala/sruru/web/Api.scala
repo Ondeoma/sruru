@@ -20,13 +20,8 @@ final case class ApiError(status: Int, message: String) extends Exception(messag
  */
 object Api {
 
-  /** ログイン前でも開く画面（401 でもログイン画面へ移らない）. */
-  val loginPages: List[String] = List("/login", "/choose", "/consent", "/forgot", "/reset-password", "/setup", "/error", "/logged-out")
-
-  def onLoginPage: Boolean = {
-    val p = dom.window.location.pathname
-    loginPages.exists(x => p == x || p.startsWith(x + "/"))
-  }
+  /** ログイン前でも開く画面にいるか（401 でもログイン画面へ移らない）. */
+  def onLoginPage: Boolean = Pages.isLogin(dom.window.location.pathname)
 
   /** 本文: JSON か、そのままのデータ（画像・XML）と Content-Type. */
   private enum Body {
@@ -72,6 +67,7 @@ object Api {
   def post[A: Decoder](url: String, body: Json = Json.obj()): Future[A] = request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(as[A])
   def put[A: Decoder](url: String, body: Json): Future[A] = request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(as[A])
   def delete(url: String): Future[Unit] = request(dom.HttpMethod.DELETE, url).map(_ => ())
+  def deleteJson(url: String, body: Json): Future[Unit] = request(dom.HttpMethod.DELETE, url, Some(Body.JsonBody(body))).map(_ => ())
   def postUnit(url: String, body: Json = Json.obj()): Future[Unit] = request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(_ => ())
   def putUnit(url: String, body: Json): Future[Unit] = request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(_ => ())
 

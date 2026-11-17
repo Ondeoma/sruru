@@ -28,8 +28,10 @@ final class LogoutNotifier(apps: AppStore, tokens: TokenStore, keys: KeyService,
                 "sid" -> loginId.map(_.toString).asJson, "events" -> Json.obj("http://schemas.openid.net/event/backchannel-logout" -> Json.obj())),
                 "logout+jwt")
               val r = Request[IO](Method.POST, Uri.unsafeFromString(c.backchannelLogoutUri.get)).withEntity(UrlForm("logout_token" -> lt))
-              http.run(r).use(_ => IO.unit).timeout(5.seconds)
-            }.handleErrorWith(e => IO.println(s"[sruru] backchannel logout to ${c.clientId} failed: ${e.getMessage}"))
+              sruru.observe.Telemetry.span("logout.backchannel", "client_id" -> c.clientId)(http.run(r).use(_ => IO.unit).timeout(5.seconds)) *>
+                sruru.observe.Metrics.count("sruru.logout.backchannel", "result" -> "sent")
+            }.handleErrorWith(e => sruru.observe.Metrics.count("sruru.logout.backchannel", "result" -> "failed") *>
+              sruru.observe.Log.println(s"[sruru] backchannel logout to ${c.clientId} failed: ${e.getMessage}"))
           case _ => IO.unit
         }
       }).start.void

@@ -233,8 +233,12 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
     val d = java.security.MessageDigest.getInstance("SHA-256").digest(at.getBytes(StandardCharsets.US_ASCII))
     Crypto.b64url.encodeToString(d.take(d.length / 2))
 
+  /** 発行したトークンを数える（protocol = oidc（ID トークンあり）・oauth2）. */
+  private def issued(grant: String, protocol: String): IO[Unit] =
+    sruru.observe.Metrics.count("sruru.tokens.issued", "grant_type" -> grant, "protocol" -> protocol)
+
   /** ユーザーに対するトークン一式（アクセストークン・ID トークン・リフレッシュトークン）. */
-  private def issue(app: Application, c: OidcClientConfig, u: User, loginId: Option[UUID], scopes: List[String], authTime: Instant,
+  private def issue(grant: String, app: Application, c: OidcClientConfig, u: User, loginId: Option[UUID], scopes: List[String], authTime: Instant,
       amr: List[String], nonce: Option[String], family: Option[UUID], now: Instant): IO[Json] =
     for
       m        <- dir.membership(u)
@@ -255,6 +259,7 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
                     tokens.createRefresh(Crypto.sha256(t), family.getOrElse(UUID.randomUUID()), app.id, u.id,
                       if scopes.contains("offline_access") then None else loginId, scopes, authTime, amr,
                       now.plusSeconds(c.refreshTokenTtl.toLong)).as(Some(t))
+      _        <- issued(grant, if idToken.isDefined then "oidc" else "oauth2")
     yield Json.obj("access_token" -> at.asJson, "token_type" -> "Bearer".asJson, "expires_in" -> ttl.asJson, "scope" -> scopes.mkString(" ").asJson,
       "id_token" -> idToken.asJson, "refresh_token" -> refresh.asJson).dropNullValues
 
@@ -271,78 +276,86 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
   /** 認可コードから発行するリフレッシュトークンの系列（コードの再利用のとき、その系列をまとめて失効させる）. */
   private def codeFamily(code: String): UUID = UUID.nameUUIDFromBytes(Crypto.sha256("sruru-code-family:" + code))
 
+  private val Grants = Set("authorization_code", "refresh_token", "client_credentials")
+
+  /** トークンのエンドポイント. スパン・メトリクスには grant_type と結果だけを載せる（コード・トークン・クライアントシークレットは載せない）. */
   private def token(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
-      clientAuth(req, f).flatMap {
-        case Left(e) => oauthErr(e)
-        case Right((app, c)) =>
-          val grant = f.getOrElse("grant_type", "")
-          if !c.grantTypes.contains(grant) then oauthErr(OAuthError("unauthorized_client", s"$grant は使えません"))
-          else
-            Time.now.flatMap { now =>
-              grant match
-                case "authorization_code" =>
-                  f.get("code").fold(oauthErr(OAuthError("invalid_request", "code がありません"))) { code =>
-                    tokens.useCode(Crypto.sha256(code), app.id, now).flatMap {
-                      case None => oauthErr(OAuthError("invalid_grant", "認可コードが無効か期限切れです"))
-                      case Some(Left(used)) =>
-                        // 認可コードの再利用: そのコードで発行したトークン（系列ごと. offline_access も）を失効させる
-                        tokens.revokeCodeFamily(used, codeFamily(code)) *>
-                          oauthErr(OAuthError("invalid_grant", "認可コードはすでに使われています"))
-                      case Some(Right(ac)) =>
-                        // PKCE なしで出したコードに code_verifier が付いてきたら拒否する（PKCE のダウングレード）
-                        val pkceOk = ac.codeChallenge match
-                          case Some(ch) => f.get("code_verifier").exists(v => Crypto.constantTimeEquals(Crypto.pkceS256(v), ch))
-                          case None     => !f.contains("code_verifier")
-                        if ac.appId != app.id then oauthErr(OAuthError("invalid_grant", "別のクライアントの認可コードです"))
-                        else if !f.get("redirect_uri").forall(_ == ac.redirectUri) then oauthErr(OAuthError("invalid_grant", "redirect_uri が一致しません"))
-                        else if !pkceOk then oauthErr(OAuthError("invalid_grant", "code_verifier が一致しません"))
-                        else
-                          dir.users.find(ac.userId).flatMap {
-                            case Some(u) if !u.disabled =>
-                              issue(app, c, u, ac.loginId, ac.scopes, ac.authTime, ac.amr, ac.nonce, Some(codeFamily(code)), now).flatMap(json)
-                            case _ => oauthErr(OAuthError("invalid_grant", "ユーザーが無効です"))
-                          }
-                    }
+      val grant = f.getOrElse("grant_type", "")
+      val label = if Grants(grant) then grant else "other"
+      sruru.observe.Telemetry.span("oauth.token", "grant_type" -> label)(tokenFor(req, f, grant)).flatTap(r =>
+        IO.whenA(!r.status.isSuccess)(sruru.observe.Metrics.count("sruru.tokens.rejected", "grant_type" -> label, "status" -> r.status.code.toString)))
+    }
+
+  private def tokenFor(req: Request[IO], f: Map[String, String], grant: String): IO[Response[IO]] =
+    clientAuth(req, f).flatMap {
+      case Left(e) => oauthErr(e)
+      case Right((app, c)) =>
+        if !c.grantTypes.contains(grant) then oauthErr(OAuthError("unauthorized_client", s"$grant は使えません"))
+        else
+          Time.now.flatMap { now =>
+            grant match
+              case "authorization_code" =>
+                f.get("code").fold(oauthErr(OAuthError("invalid_request", "code がありません"))) { code =>
+                  tokens.useCode(Crypto.sha256(code), app.id, now).flatMap {
+                    case None => oauthErr(OAuthError("invalid_grant", "認可コードが無効か期限切れです"))
+                    case Some(Left(used)) =>
+                      // 認可コードの再利用: そのコードで発行したトークン（系列ごと. offline_access も）を失効させる
+                      tokens.revokeCodeFamily(used, codeFamily(code)) *>
+                        oauthErr(OAuthError("invalid_grant", "認可コードはすでに使われています"))
+                    case Some(Right(ac)) =>
+                      // PKCE なしで出したコードに code_verifier が付いてきたら拒否する（PKCE のダウングレード）
+                      val pkceOk = ac.codeChallenge match
+                        case Some(ch) => f.get("code_verifier").exists(v => Crypto.constantTimeEquals(Crypto.pkceS256(v), ch))
+                        case None     => !f.contains("code_verifier")
+                      if ac.appId != app.id then oauthErr(OAuthError("invalid_grant", "別のクライアントの認可コードです"))
+                      else if !f.get("redirect_uri").forall(_ == ac.redirectUri) then oauthErr(OAuthError("invalid_grant", "redirect_uri が一致しません"))
+                      else if !pkceOk then oauthErr(OAuthError("invalid_grant", "code_verifier が一致しません"))
+                      else
+                        dir.users.find(ac.userId).flatMap {
+                          case Some(u) if !u.disabled =>
+                            issue(grant, app, c, u, ac.loginId, ac.scopes, ac.authTime, ac.amr, ac.nonce, Some(codeFamily(code)), now).flatMap(json)
+                          case _ => oauthErr(OAuthError("invalid_grant", "ユーザーが無効です"))
+                        }
                   }
-                case "refresh_token" =>
-                  f.get("refresh_token").fold(oauthErr(OAuthError("invalid_request", "refresh_token がありません"))) { rt =>
-                    tokens.refresh(Crypto.sha256(rt)).flatMap {
-                      case Some(t) if t.appId == app.id && t.revokedAt.isEmpty && t.expiresAt.isAfter(now) =>
-                        if t.usedAt.isDefined then
-                          // 再利用（盗まれた可能性）: 系列ごと失効させる
-                          tokens.revokeFamilyWithAccess(t) *> oauthErr(OAuthError("invalid_grant", "リフレッシュトークンはすでに使われています"))
-                        else
-                          dir.users.find(t.userId).flatMap {
-                            case Some(u) =>
-                              (stillAllowed(app, u), loginAlive(t.loginId, now)).tupled.flatMap {
-                                case (_, false) =>
-                                  tokens.revokeFamily(t.family) *> oauthErr(OAuthError("invalid_grant", "ログインが終わっています"))
-                                case (false, _) => tokens.revokeFamily(t.family) *> oauthErr(OAuthError("invalid_grant", "このアプリケーションは使えなくなりました"))
-                                case (true, true) =>
-                                  val narrowed = f.get("scope").map(_.split(' ').filter(_.nonEmpty).toList)
-                                  val scopes   = narrowed.fold(t.scopes)(_.filter(t.scopes.contains))
-                                  tokens.markRefreshUsed(t.id, now).flatMap {
-                                    case false => oauthErr(OAuthError("invalid_grant", "リフレッシュトークンはすでに使われています"))
-                                    case true  => issue(app, c, u, t.loginId, scopes, t.authTime, t.amr, None, Some(t.family), now).flatMap(json)
-                                  }
-                              }
-                            case None => oauthErr(OAuthError("invalid_grant", "ユーザーが見つかりません"))
-                          }
-                      case _ => oauthErr(OAuthError("invalid_grant", "リフレッシュトークンが無効か期限切れです"))
-                    }
+                }
+              case "refresh_token" =>
+                f.get("refresh_token").fold(oauthErr(OAuthError("invalid_request", "refresh_token がありません"))) { rt =>
+                  tokens.refresh(Crypto.sha256(rt)).flatMap {
+                    case Some(t) if t.appId == app.id && t.revokedAt.isEmpty && t.expiresAt.isAfter(now) =>
+                      if t.usedAt.isDefined then
+                        // 再利用（盗まれた可能性）: 系列ごと失効させる
+                        tokens.revokeFamilyWithAccess(t) *> oauthErr(OAuthError("invalid_grant", "リフレッシュトークンはすでに使われています"))
+                      else
+                        dir.users.find(t.userId).flatMap {
+                          case Some(u) =>
+                            (stillAllowed(app, u), loginAlive(t.loginId, now)).tupled.flatMap {
+                              case (_, false) =>
+                                tokens.revokeFamily(t.family) *> oauthErr(OAuthError("invalid_grant", "ログインが終わっています"))
+                              case (false, _) => tokens.revokeFamily(t.family) *> oauthErr(OAuthError("invalid_grant", "このアプリケーションは使えなくなりました"))
+                              case (true, true) =>
+                                val narrowed = f.get("scope").map(_.split(' ').filter(_.nonEmpty).toList)
+                                val scopes   = narrowed.fold(t.scopes)(_.filter(t.scopes.contains))
+                                tokens.markRefreshUsed(t.id, now).flatMap {
+                                  case false => oauthErr(OAuthError("invalid_grant", "リフレッシュトークンはすでに使われています"))
+                                  case true  => issue(grant, app, c, u, t.loginId, scopes, t.authTime, t.amr, None, Some(t.family), now).flatMap(json)
+                                }
+                            }
+                          case None => oauthErr(OAuthError("invalid_grant", "ユーザーが見つかりません"))
+                        }
+                    case _ => oauthErr(OAuthError("invalid_grant", "リフレッシュトークンが無効か期限切れです"))
                   }
-                case "client_credentials" =>
-                  if c.isPublic then oauthErr(OAuthError("unauthorized_client", "公開クライアントでは使えません"))
-                  else
-                    val requested = f.get("scope").map(_.split(' ').filter(_.nonEmpty).toList).getOrElse(c.scopes)
-                    val scopes = requested.filter(s => c.scopes.contains(s) && !Set("openid", "offline_access")(s))
-                    accessToken(Some(app), c, c.clientId, None, None, scopes, now).flatMap((at, ttl) =>
-                      json(Json.obj("access_token" -> at.asJson, "token_type" -> "Bearer".asJson, "expires_in" -> ttl.asJson,
-                        "scope" -> scopes.mkString(" ").asJson)))
-                case _ => oauthErr(OAuthError("unsupported_grant_type", s"$grant は使えません"))
-            }
-      }
+                }
+              case "client_credentials" =>
+                if c.isPublic then oauthErr(OAuthError("unauthorized_client", "公開クライアントでは使えません"))
+                else
+                  val requested = f.get("scope").map(_.split(' ').filter(_.nonEmpty).toList).getOrElse(c.scopes)
+                  val scopes = requested.filter(s => c.scopes.contains(s) && !Set("openid", "offline_access")(s))
+                  accessToken(Some(app), c, c.clientId, None, None, scopes, now).flatTap(_ => issued("client_credentials", "oauth2")).flatMap((at, ttl) =>
+                    json(Json.obj("access_token" -> at.asJson, "token_type" -> "Bearer".asJson, "expires_in" -> ttl.asJson,
+                      "scope" -> scopes.mkString(" ").asJson)))
+              case _ => oauthErr(OAuthError("unsupported_grant_type", s"$grant は使えません"))
+          }
     }
 
   // ------------------------------------------------------------------ アクセストークンの検証
