@@ -80,7 +80,7 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
   /** POST するフォームの画面. question がなければすぐに送信し、あれば問いとボタンを見せる. */
   private def formPage(action: String, params: List[(String, String)], question: Option[String]): IO[Response[IO]] =
     val nonce = Crypto.randomToken(12)
-    def esc(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    def esc(s: String) = Html.escape(s)
     val inputs = params.map((k, v) => s"""<input type="hidden" name="${esc(k)}" value="${esc(v)}">""").mkString
     val body = question match
       case None    => s"""<form method="post" action="${esc(action)}">$inputs<noscript><button type="submit">続ける</button></noscript></form>
@@ -88,9 +88,7 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
       case Some(q) => s"""<form method="post" action="${esc(action)}">$inputs<p>${esc(q)}</p><button type="submit">はい</button></form>"""
     val html = s"""<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
       |<title>sruru</title></head><body>$body</body></html>""".stripMargin
-    // CirceEntityCodec の import があるので、文字列のまま送る Encoder を明示する（暗黙のままだと JSON の文字列になる）
-    IO.pure(Response[IO](Status.Ok).withEntity(html)(using EntityEncoder.stringEncoder).withContentType(headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
-      .putHeaders("Content-Security-Policy" -> s"default-src 'none'; script-src 'nonce-$nonce'; form-action *", "Cache-Control" -> "no-store"))
+    IO.pure(Html.response(html, s"default-src 'none'; script-src 'nonce-$nonce'; form-action *"))
 
   private def params(req: Request[IO]): IO[Map[String, String]] =
     // POST は本文だけを使う（クライアントのシークレットやトークンを URL に載せさせない）

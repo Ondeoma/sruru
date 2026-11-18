@@ -149,7 +149,11 @@ final case class LoginSessionDto(id: UUID, ip: Option[String], userAgent: Option
     amr: List[String], current: Boolean) derives ConfiguredCodec
 
 final case class ApiTokenDto(id: UUID, name: String, prefix: String, scopes: List[String], expiresAt: Option[Timestamp],
-    lastUsedAt: Option[Timestamp], createdAt: Timestamp, owner: Option[UserBrief] = None) derives ConfiguredCodec
+    lastUsedAt: Option[Timestamp], createdAt: Timestamp, owner: Option[UserBrief] = None, oauthClient: Option[String] = None)
+    derives ConfiguredCodec
+/** OAuth で連携しているサービス（兄弟のサービス. 利用者の権限で、許したスコープの範囲だけを使う）. */
+final case class OAuthGrantDto(clientId: String, name: String, scopes: List[String], createdAt: Timestamp, lastUsedAt: Option[Timestamp])
+    derives ConfiguredCodec
 final case class TokenReq(name: String, scopes: List[String], days: Option[Int] = None, userId: Option[UUID] = None) derives ConfiguredCodec
 final case class CreatedTokenDto(token: String, info: ApiTokenDto) derives ConfiguredCodec
 

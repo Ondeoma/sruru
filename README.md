@@ -109,6 +109,7 @@ java -cp 'dist/lib/*' sruru.app.Main
 | `LOG_FORMAT` / `LOG_LEVEL` | 標準出力のログの形（`text`（既定）・`json`）と水準（既定 `INFO`）。ログにはトレースの ID と操作したユーザーが付く |
 | `SKORIMAKO_RUM_TOKEN` / `SKORIMAKO_RUM_URL` / `SKORIMAKO_RUM_SAMPLE_RATE` | 画面のブラウザの観測（skorimako の RUM）。ログインした後の画面だけで読み込む（ログイン・同意・パスワードの再設定の画面では読まない）。トークンは skorimako の管理の画面で登録したアプリのもの。URL を省略すると `SKORIMAKO_URL` |
 | `VAPID_SUBJECT` | プッシュ通知（PWA. パスワードの変更・アカウントのロックなどを本人に知らせる）の連絡先（`mailto:…` か `https://…`。省略すると `PUBLIC_URL`）。VAPID の鍵は初回の起動で作って DB に保存する |
+| `OAUTH_CLIENTS` | 兄弟のサービス（skakapo など）が利用者の権限で REST API・MCP を使うための OAuth のクライアント（JSON の配列 `[{"id","secret"（16文字以上）,"redirectUri","name","scopes":["read"]}]`）。渡せるのは `read` だけ（管理の操作はできない）。利用者は個人設定の「API トークン」で連携を確かめ・やめられる |
 | `DEV_MODE` | 開発用（`APP_SECRET` を省略できる）。本番では使わない |
 
 ポリシー（パスワード・ロック・多要素認証・セッション・IP 制限・クライアント証明書・表示・監査ログの保存期間）は管理画面の「ポリシー」で変えます。
@@ -125,6 +126,7 @@ java -cp 'dist/lib/*' sruru.app.Main
 | SCIM 2.0 | `/scim/v2`（`Authorization: Bearer <scim スコープのトークン>`） |
 | REST API の一覧 | `GET /api/endpoints` |
 | MCP | `POST /mcp`（Streamable HTTP） |
+| 兄弟のサービスとの連携（OAuth. 認可コード + PKCE（S256）・クライアントの認証は Basic） | `/oauth/authorize`・`/oauth/token`・`/oauth/revoke`（OIDC の `/oauth2/…` とは別。read の API トークンとリフレッシュトークンを発行する） |
 
 MCP の例（Claude Code）:
 

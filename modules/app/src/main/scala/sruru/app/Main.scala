@@ -61,6 +61,7 @@ object Config:
                case (Some(k), Some(p)) => Right(Some(TlsConfig(k, p, int("HTTPS_PORT").getOrElse(8443))))
                case (None, _)          => Right(None)
                case _                  => Left("TLS_KEYSTORE_PASSWORD を設定してください")
+      oauth <- opt("OAUTH_CLIENTS").fold(Right(Nil))(OAuthClient.parse)
     yield
       val base = pub.stripSuffix("/")
       val smtp = opt("SMTP_HOST").map { h =>
@@ -71,7 +72,7 @@ object Config:
       AppConfig(
         port = int("HTTP_PORT").getOrElse(8080),
         db = DbConfig(dbUrl, dbUser, dbPass, int("DATABASE_POOL_SIZE").getOrElse(10)),
-        api = ApiConfig(publicUrl = base, cookieSecure = base.startsWith("https://"), devMode = dev, mailEnabled = smtp.isDefined,
+        api = ApiConfig(publicUrl = base, cookieSecure = base.startsWith("https://"), devMode = dev, mailEnabled = smtp.isDefined, oauthClients = oauth,
           nodeId = opt("NODE_ID").getOrElse(java.net.InetAddress.getLocalHost.getHostName + "-" + java.util.UUID.randomUUID().toString.take(8))),
         staticDir = opt("STATIC_DIR"),
         smtp = smtp,
@@ -92,10 +93,10 @@ object Main extends IOApp.Simple:
   private given org.typelevel.log4cats.LoggerFactory[IO] = org.typelevel.log4cats.slf4j.Slf4jFactory.create[IO]
 
   /** バックエンドのパス（画面の index.html を返さない）. */
-  private val backendPrefixes = Set("api", "auth", "oauth2", "saml", "scim", "mcp", ".well-known", "avatars", "app-icons", "brand-logos", "healthz")
+  private val backendPrefixes = Set("api", "auth", "oauth2", "oauth", "saml", "scim", "mcp", ".well-known", "avatars", "app-icons", "brand-logos", "healthz")
 
   /** トレース・メトリクス・アクセスログの対象（画像・/healthz は除く）. クエリ（?code=・?state=・SAMLRequest）は記録しない. */
-  private val tracedPrefixes = List("/api", "/auth", "/oauth2", "/saml", "/scim", "/mcp", "/.well-known")
+  private val tracedPrefixes = List("/api", "/auth", "/oauth2", "/oauth", "/saml", "/scim", "/mcp", "/.well-known")
 
   def run: IO[Unit] =
     for
@@ -141,6 +142,7 @@ object Main extends IOApp.Simple:
         adminR    = new AdminRoutes(dir, factors, sessions, tokens, apps, fedStore, fed, auditStore, keys, me, login, claims,
                       policies, audit, mail, box, settings, new SiteIcon(http), auth, cfg.api)
         scim      = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg.api)
+        oauth     = new OAuthRoutes(new OAuthStore(xa), dir, auth, audit, cfg.api)
         resume    = new ResumeRoutes(tokens, Map("oidc" -> oidc.resume, "saml" -> saml.resume), gate)
         _ <- Resource.eval(setupNotice(loginR))
         loops = List[IO[Unit]](
@@ -149,7 +151,7 @@ object Main extends IOApp.Simple:
                   Loops.every(10.minutes, 1.hour, "dynamic groups")(lock.exclusive("dynamic-groups", 50.minutes)(dir.recomputeAll))
                 )
         _ <- loops.traverse_(_.background)
-        rest = healthRoutes(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+> saml.routes <+>
+        rest = healthRoutes(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+> oauth.routes <+> saml.routes <+>
                  resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
         app  = rest <+> new McpRoutes(rest, auth, cfg.api).routes
         all  = cfg.staticDir.fold(app)(d => app <+> spa(d))

@@ -16,7 +16,7 @@ import java.util.UUID
 /** 共通の変換と画像の受け取り. */
 object Conv:
   def token(t: ApiToken, owner: Option[UserBrief] = None): ApiTokenDto =
-    ApiTokenDto(t.id, t.name, t.prefix, t.scopes, t.expiresAt, t.lastUsedAt, t.createdAt, owner)
+    ApiTokenDto(t.id, t.name, t.prefix, t.scopes, t.expiresAt, t.lastUsedAt, t.createdAt, owner, t.oauthClient)
 
   def session(l: Login, current: Option[UUID]): LoginSessionDto =
     LoginSessionDto(l.id, l.ip, l.userAgent, l.createdAt, l.lastSeenAt, l.amr, current.contains(l.id))

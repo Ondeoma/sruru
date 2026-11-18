@@ -23,10 +23,49 @@ final case class ApiConfig(
     maxAvatarBytes: Int = 512 * 1024,
     devMode: Boolean = false,
     mailEnabled: Boolean = false,
-    nodeId: String = "node"
+    nodeId: String = "node",
+    oauthClients: List[OAuthClient] = Nil
 ):
   /** OIDC の issuer（末尾の / なし）. */
   def issuer: String = publicUrl
+
+/**
+ * OAuth（/oauth/…）で連携する兄弟のサービス（skakapo など. 環境変数 OAUTH_CLIENTS で登録する）.
+ * redirectUri は完全一致で照合する. sruru は管理の基盤なので、渡せるスコープは read だけ.
+ */
+final case class OAuthClient(id: String, secret: String, redirectUri: String, name: String, scopes: List[String] = List(TokenScopes.Read))
+
+object OAuthClient:
+  /** OAuth で渡せるスコープ（write・admin・scim はトークンでは渡さない）. */
+  val Allowed: Set[String] = Set(TokenScopes.Read)
+
+  private given Decoder[OAuthClient] = Decoder.instance(c =>
+    for
+      id     <- c.get[String]("id")
+      secret <- c.get[String]("secret")
+      ru     <- c.get[String]("redirectUri")
+      name   <- c.getOrElse[String]("name")(id)
+      scopes <- c.getOrElse[List[String]]("scopes")(List(TokenScopes.Read))
+    yield OAuthClient(id.trim, secret, ru.trim, name.trim, scopes.distinct))
+
+  /** OAUTH_CLIENTS（JSON の配列）を読む. */
+  def parse(json: String): Either[String, List[OAuthClient]] =
+    io.circe.parser.decode[List[OAuthClient]](json).left.map(e => s"OAUTH_CLIENTS の形式が正しくありません: ${e.getMessage}").flatMap { cs =>
+      cs.find(c => c.id.isEmpty || c.redirectUri.isEmpty).map(_ => "OAUTH_CLIENTS の id・redirectUri は必須です")
+        .orElse(cs.find(_.secret.length < 16).map(c => s"OAUTH_CLIENTS の ${c.id} の secret は16文字以上にしてください"))
+        .orElse(cs.find(c => c.scopes.isEmpty || !c.scopes.forall(Allowed)).map(c => s"OAUTH_CLIENTS の ${c.id} の scopes は read だけにしてください"))
+        .orElse(Option.when(cs.map(_.id).distinct.size != cs.size)("OAUTH_CLIENTS の id が重複しています"))
+        .toLeft(cs)
+    }
+
+/** サーバーで組み立てる HTML の画面. */
+object Html:
+  def escape(s: String): String = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
+
+  /** HTML の応答（CirceEntityCodec の import があっても JSON の文字列にしないよう、Encoder を明示する）. */
+  def response(html: String, csp: String, status: Status = Status.Ok): Response[IO] =
+    Response[IO](status).withEntity(html)(using EntityEncoder.stringEncoder).withContentType(headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+      .putHeaders("Content-Security-Policy" -> csp, "Cache-Control" -> "no-store")
 
 /** 処理の失敗（HTTP の応答に変換する）. */
 enum Fail:

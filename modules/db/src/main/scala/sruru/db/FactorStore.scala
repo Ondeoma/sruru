@@ -11,8 +11,9 @@ import java.util.UUID
 
 final case class TotpDevice(id: UUID, userId: UUID, name: String, secretEnc: String, confirmed: Boolean, lastUsedStep: Long, createdAt: Instant)
 final case class EmailToken(id: UUID, userId: UUID, purpose: String, tokenHash: Array[Byte], attempts: Int, expiresAt: Instant)
+/** API トークン. oauthClient は OAuth の連携で発行したもの（OAUTH_CLIENTS の id）. */
 final case class ApiToken(id: UUID, userId: UUID, name: String, prefix: String, scopes: List[String], expiresAt: Option[Instant],
-    lastUsedAt: Option[Instant], createdAt: Instant)
+    lastUsedAt: Option[Instant], createdAt: Instant, oauthClient: Option[String] = None)
 final case class UserCert(id: UUID, userId: UUID, fingerprint: String, subject: String, issuer: String, notAfter: Instant, createdAt: Instant)
 final case class CertAuthority(id: UUID, name: String, pem: String, enabled: Boolean, createdAt: Instant)
 
@@ -95,12 +96,10 @@ final class FactorStore(xa: Transactor[IO]) extends TxStore(xa):
 
   // ------------------------------------------------------------------ API トークン
 
-  private val tokenCols = fr"id, user_id, name, prefix, scopes, expires_at, last_used_at, created_at"
+  private val tokenCols = FactorStore.tokenCols
 
   def createToken(userId: UUID, name: String, prefix: String, hash: Array[Byte], scopes: List[String], expiresAt: Option[Instant]): IO[ApiToken] =
-    val t = ApiToken(UUID.randomUUID(), userId, name, prefix, scopes, expiresAt, None, Instant.now())
-    tx(sql"""insert into api_tokens (id, user_id, name, prefix, token_hash, scopes, expires_at)
-             values (${t.id}, $userId, $name, $prefix, $hash, ${scopes.toArray}, $expiresAt)""".update.run).as(t)
+    tx(FactorStore.insertToken(userId, name, prefix, hash, scopes, expiresAt))
 
   def tokens(userId: UUID): IO[List[ApiToken]] =
     tx((fr"select" ++ tokenCols ++ fr"from api_tokens where user_id = $userId order by created_at desc").query[ApiToken].to[List])
@@ -167,3 +166,15 @@ final class FactorStore(xa: Transactor[IO]) extends TxStore(xa):
   def purgeThrottle(before: Instant): IO[Int] = tx(sql"delete from login_throttle where window_start < $before".update.run)
 
   def purgeEmailTokens(now: Instant): IO[Int] = tx(sql"delete from email_tokens where expires_at < $now".update.run)
+
+object FactorStore:
+  /** API トークンの列（OAuth の連携で発行したものは、そのクライアントも）. */
+  private[db] val tokenCols =
+    fr"id, user_id, name, prefix, scopes, expires_at, last_used_at, created_at, (select g.client_id from oauth_grants g where g.token_id = api_tokens.id)"
+
+  /** API トークンを作る（OAuth の連携と同じトランザクションで作れるように ConnectionIO で）. */
+  private[db] def insertToken(userId: UUID, name: String, prefix: String, hash: Array[Byte], scopes: List[String],
+      expiresAt: Option[Instant]): ConnectionIO[ApiToken] =
+    val t = ApiToken(UUID.randomUUID(), userId, name, prefix, scopes, expiresAt, None, Instant.now())
+    sql"""insert into api_tokens (id, user_id, name, prefix, token_hash, scopes, expires_at)
+          values (${t.id}, $userId, $name, $prefix, $hash, ${scopes.toArray}, $expiresAt)""".update.run.as(t)

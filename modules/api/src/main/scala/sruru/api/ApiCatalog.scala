@@ -47,6 +47,8 @@ object ApiCatalog:
     Endpoint("DELETE", "/api/me/tokens/{id}", "API トークンを削除"),
     Endpoint("GET", "/api/me/consents", "許可したアプリケーション → [ConsentDto]"),
     Endpoint("DELETE", "/api/me/consents/{appId}", "許可を取り消す（トークンも失効）"),
+    Endpoint("GET", "/api/me/oauth", "OAuth で連携しているサービス → [OAuthGrantDto]"),
+    Endpoint("DELETE", "/api/me/oauth/{clientId}", "OAuth の連携をやめる（トークンも失効）"),
     Endpoint("GET", "/api/me/certs", "登録した証明書 → [UserCertDto]"),
     Endpoint("POST", "/api/me/certs", "証明書を登録 CertReq{pem} → UserCertDto"),
     Endpoint("DELETE", "/api/me/certs/{id}", "証明書を外す"),

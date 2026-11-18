@@ -4,7 +4,7 @@ import scalaJS from './vite-scalajs.js'
 const backend = process.env.BACKEND ?? 'http://localhost:9100'
 
 // バックエンドへ転送するパス（API・ログインの途中・各プロトコルのエンドポイント・画像）
-const paths = ['/api', '/auth', '/oauth2', '/saml', '/scim', '/mcp', '/.well-known', '/avatars', '/app-icons']
+const paths = ['/api', '/auth', '/oauth2', '/oauth', '/saml', '/scim', '/mcp', '/.well-known', '/avatars', '/app-icons']
 
 export default defineConfig({
   // 画面(Scalactive)は sbt の web プロジェクトから読み込む
