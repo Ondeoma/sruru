@@ -119,6 +119,10 @@ final class Directory(val users: UserStore, val groups: GroupStore, factors: Fac
 
   def picture(u: User): IO[Option[String]] = policies.get.map(p => pictureUrl(u, p.branding.gravatar))
 
+  /** OIDC の picture. 他のサービスはログインしたときの値を持ち続けるので、版を付けない決まった URL を渡す.
+    * /avatars/{id} が、そのときの自分の画像・代わりの画像（外部 IdP・Gravatar）・404 のどれかを返すので、ログインし直さなくても変更が届く. */
+  def claimPicture(u: User): String = s"${cfg.publicUrl}/avatars/${u.id}"
+
   /** 式で使う値（{{user.…}}）. */
   def context(u: User): IO[(Json, Membership)] =
     (membership(u), picture(u)).mapN((m, pic) => (Context.user(u, m, pic), m))

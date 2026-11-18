@@ -29,7 +29,8 @@ final class Claims(dir: Directory, apps: AppStore):
   def sub(u: User, c: OidcClientConfig): String = Claims.sub(u, c)
 
   def build(u: User, m: Membership, app: Application, c: OidcClientConfig, scopes: Set[String]): IO[Json] =
-    (dir.picture(u), apps.mappings(app.id)).mapN { (pic, ms) =>
+    apps.mappings(app.id).map { ms =>
+      val pic = dir.claimPicture(u)
       val base = List("sub" -> sub(u, c).asJson)
       val profile = if scopes("profile") then List(
         "name" -> u.name.asJson, "given_name" -> u.givenName.asJson, "family_name" -> u.familyName.asJson,
@@ -38,7 +39,7 @@ final class Claims(dir: Directory, apps: AppStore):
       val email  = if scopes("email") then List("email" -> u.email.asJson, "email_verified" -> u.emailVerified.asJson) else Nil
       val phone  = if scopes("phone") then List("phone_number" -> u.phoneNumber.asJson) else Nil
       val groups = if scopes("groups") || c.includeGroups then List("groups" -> m.names.asJson) else Nil
-      val ctx    = Context.of(Context.user(u, m, pic), Some(app))
+      val ctx    = Context.of(Context.user(u, m, Some(pic)), Some(app))
       val custom = ms.filter(x => x.scope.forall(scopes.contains)).flatMap { x =>
         val v = Expr.eval(x.expression, ctx)
         Option.when(!Expr.isEmpty(v))(x.name -> (if x.multi && !v.isArray then Json.arr(v) else v))
