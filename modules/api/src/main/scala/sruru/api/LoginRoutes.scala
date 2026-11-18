@@ -329,10 +329,15 @@ final class LoginRoutes(login: LoginService, fed: FederationService, fedStore: F
       })
 
     // ---------------------------------------------------------------- 画像（他のサービスからも読めるように公開する）
+    // 他のサービスはログインしたときの URL を持ち続けるので、画像を変えたら短い時間で、消したら代わりの画像（外部 IdP・Gravatar）に変わるようにする
     case GET -> Root / "avatars" / UuidVar(id) =>
       dir.users.avatar(id).flatMap {
         case Some((bytes, ct)) => image(bytes, ct)
-        case None              => NotFound()
+        case None =>
+          dir.users.find(id).flatMap(_.filterNot(_.hasAvatar).flatTraverse(dir.picture)).flatMap {
+            case Some(url) => IO.pure(Response[IO](Status.Found).putHeaders(Location(Uri.unsafeFromString(url)), "Cache-Control" -> "public, max-age=300"))
+            case None      => NotFound()
+          }
       }
 
     // ロゴ（ID ごとに中身は変わらない）. SVG はスクリプトを動かさない（直接開かれても）
@@ -357,5 +362,5 @@ final class LoginRoutes(login: LoginService, fed: FederationService, fedStore: F
   private def image(bytes: Array[Byte], ct: String): IO[Response[IO]] =
     val mt = MediaType.parse(ct).toOption.filter(_.mainType == "image").getOrElse(MediaType.image.png)
     IO.pure(Response[IO](Status.Ok).withEntity(bytes)(using EntityEncoder.byteArrayEncoder).withContentType(`Content-Type`(mt))
-      .putHeaders("Cache-Control" -> "public, max-age=86400", "X-Content-Type-Options" -> "nosniff", "Content-Security-Policy" -> "default-src 'none'",
+      .putHeaders("Cache-Control" -> "public, max-age=300", "X-Content-Type-Options" -> "nosniff", "Content-Security-Policy" -> "default-src 'none'",
         "Cross-Origin-Resource-Policy" -> "cross-origin", "Access-Control-Allow-Origin" -> "*"))

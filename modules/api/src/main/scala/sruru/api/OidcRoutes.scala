@@ -87,7 +87,8 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
       case Some(q) => s"""<form method="post" action="${esc(action)}">$inputs<p>${esc(q)}</p><button type="submit">はい</button></form>"""
     val html = s"""<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
       |<title>sruru</title></head><body>$body</body></html>""".stripMargin
-    Ok(html).map(_.withContentType(headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+    // CirceEntityCodec の import があるので、文字列のまま送る Encoder を明示する（暗黙のままだと JSON の文字列になる）
+    IO.pure(Response[IO](Status.Ok).withEntity(html)(using EntityEncoder.stringEncoder).withContentType(headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
       .putHeaders("Content-Security-Policy" -> s"default-src 'none'; script-src 'nonce-$nonce'; form-action *", "Cache-Control" -> "no-store"))
 
   private def params(req: Request[IO]): IO[Map[String, String]] =
@@ -468,7 +469,7 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
         c      <- auth.reqCtx(req)
         // id_token_hint の sid がこのブラウザのログインなら、そのログインをログアウトする
         byHint <- sid.flatTraverse(sessions.login).map(_.flatMap(l => active.filter(_._1.id == l.browserSessionId).map(a => (a._1, l.userId))))
-        post    = f.get("post_logout_redirect_uri").filter(u => client.exists(_._2.postLogoutRedirectUris.contains(u)))
+        post    = f.get("post_logout_redirect_uri").filter(u => client.exists(c => OidcRoutes.allowedPostLogout(c._2, u)))
         res    <-
           if byHint.isEmpty && active.isDefined && req.method == Method.GET then
             // ヒントで特定できない GET は確認してから（他のサイトに埋め込まれたリンクだけでログアウトさせない）.
@@ -506,3 +507,12 @@ final class OidcRoutes(apps: AppStore, tokens: TokenStore, sessions: SessionStor
     case OPTIONS -> Root / "oauth2" / _ =>
       cors(IO.pure(Response[IO](Status.NoContent).putHeaders("Access-Control-Allow-Methods" -> "GET, POST")))
   }
+
+object OidcRoutes:
+  private def origin(u: String): Option[String] =
+    scala.util.Try(java.net.URI.create(u)).toOption.filter(x => x.getScheme != null && x.getHost != null && x.getUserInfo == null)
+      .map(x => s"${x.getScheme.toLowerCase}://${x.getHost.toLowerCase}${if x.getPort == -1 then "" else s":${x.getPort}"}")
+
+  /** ログアウト後に戻してよい URI: 登録したもの、または登録したリダイレクト URI と同じオリジンの URL（各サービスの「/」を個別に登録しなくてよいように）. */
+  def allowedPostLogout(c: OidcClientConfig, u: String): Boolean =
+    c.postLogoutRedirectUris.contains(u) || origin(u).exists(o => c.redirectUris.flatMap(origin).contains(o))
