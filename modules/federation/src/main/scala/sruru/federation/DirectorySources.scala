@@ -6,17 +6,10 @@ import io.circe.{HCursor, Json}
 import org.http4s.client.Client
 
 object DirectorySources {
-  private def field(
-    c: HCursor,
-    k: String
-  ): Either[String, String] = Dir.str(c, k).toRight(s"設定に $k がありません")
+  private def field(c: HCursor, k: String): Either[String, String] = Dir.str(c, k).toRight(s"設定に $k がありません")
 
   /** 設定の JSON から（google: {"serviceAccountJson": "...", "adminEmail": "...", "customer": "my_customer"} / entra: {"tenantId": "...", "clientId": "...", "clientSecret": "..."}）. */
-  def from(
-    kind: String,
-    config: Json,
-    http: Client[IO]
-  ): Either[String, DirectorySource] = {
+  def from(kind: String, config: Json, http: Client[IO]): Either[String, DirectorySource] = {
     val c = config.hcursor
     kind.trim.toLowerCase match {
       case "google" | "google_workspace" =>

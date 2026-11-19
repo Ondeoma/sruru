@@ -14,9 +14,7 @@ import io.circe.Json
  */
 object Expr {
 
-  final case class Pipeline(
-    head: Term,
-    filters: List[(String, List[String])])
+  final case class Pipeline(head: Term, filters: List[(String, List[String])])
   enum Term {
     case Path(
       segments: List[String])
@@ -54,9 +52,7 @@ object Expr {
 
   // ------------------------------------------------------------------ 解析
 
-  def parse(
-    src: String
-  ): Either[String, List[Part]] = {
+  def parse(src: String): Either[String, List[Part]] = {
     val out = List.newBuilder[Part]
     var i = 0
     var err: Option[String] = None
@@ -80,10 +76,7 @@ object Expr {
   }
 
   /** 引用符の中の }} は閉じとみなさない. */
-  private def findClose(
-    s: String,
-    from: Int
-  ): Int = {
+  private def findClose(s: String, from: Int): Int = {
     var i = from
     var q = false
     while i < s.length - 1 do {
@@ -97,10 +90,7 @@ object Expr {
   }
 
   /** | と : で区切る（引用符の中は区切らない）. */
-  private def split(
-    s: String,
-    sep: Char
-  ): List[String] = {
+  private def split(s: String, sep: Char): List[String] = {
     val out = List.newBuilder[String]
     val cur = new StringBuilder
     var q = false
@@ -117,18 +107,14 @@ object Expr {
     out.result()
   }
 
-  private def unquote(
-    s: String
-  ): Either[String, String] = {
+  private def unquote(s: String): Either[String, String] = {
     val t = s.trim
     if t.length >= 2 && t.head == '"' && t.last == '"' then
       Right(t.substring(1, t.length - 1).replace("\\\"", "\"").replace("\\\\", "\\"))
     else Left(s"引数は \"...\" で囲んでください: $t")
   }
 
-  private def parsePipeline(
-    s: String
-  ): Either[String, Pipeline] =
+  private def parsePipeline(s: String): Either[String, Pipeline] =
     split(s, '|').map(_.trim) match {
       case Nil => Left("式が空です")
       case h :: fs =>
@@ -138,18 +124,12 @@ object Expr {
             Right(Term.Path(h.split('.').toList))
           else Left(s"値の指定が不正です: $h")
         val filters = fs.foldRight[Either[String, List[(String, List[String])]]](Right(Nil)) {
-          (
-            f,
-            acc
-          ) =>
+          (f, acc) =>
             acc.flatMap { l =>
               split(f, ':').map(_.trim) match {
                 case name :: args if Known(name) =>
-                  args.foldRight[Either[String, List[String]]](Right(Nil))(
-                    (
-                      a,
-                      r
-                    ) => r.flatMap(rs => unquote(a).map(_ :: rs))
+                  args.foldRight[Either[String, List[String]]](Right(Nil))((a, r) =>
+                    r.flatMap(rs => unquote(a).map(_ :: rs))
                   ).map(as => (name, as) :: l)
                 case name :: _ => Left(s"不明なフィルターです: $name")
                 case Nil => Left("フィルターが空です")
@@ -159,27 +139,15 @@ object Expr {
         for h2 <- head; f2 <- filters yield Pipeline(h2, f2)
     }
 
-  def validate(
-    src: String
-  ): Either[String, Unit] = parse(src).map(_ => ())
+  def validate(src: String): Either[String, Unit] = parse(src).map(_ => ())
 
   // ------------------------------------------------------------------ 評価
 
   /** ctx の中のパス（キーの大文字小文字は区別する）. */
-  def lookup(
-    ctx: Json,
-    path: List[String]
-  ): Json =
-    path.foldLeft(ctx)(
-      (
-        j,
-        k
-      ) => j.asObject.flatMap(_(k)).getOrElse(Json.Null)
-    )
+  def lookup(ctx: Json, path: List[String]): Json =
+    path.foldLeft(ctx)((j, k) => j.asObject.flatMap(_(k)).getOrElse(Json.Null))
 
-  def render(
-    j: Json
-  ): String =
+  def render(j: Json): String =
     j.fold(
       "",
       _.toString,
@@ -189,28 +157,17 @@ object Expr {
       _ => j.noSpaces
     )
 
-  private def strs(
-    j: Json
-  ): List[String] = j.asArray.map(_.toList.map(render)).getOrElse(if j.isNull then Nil else List(render(j)))
+  private def strs(j: Json): List[String] =
+    j.asArray.map(_.toList.map(render)).getOrElse(if j.isNull then Nil else List(render(j)))
 
-  private def mapStr(
-    j: Json
-  )(
-    f: String => String
-  ): Json =
+  private def mapStr(j: Json)(f: String => String): Json =
     j.asArray match {
       case Some(a) => Json.fromValues(a.map(x => Json.fromString(f(render(x)))))
       case None => if j.isNull then j else Json.fromString(f(render(j)))
     }
 
-  private def apply(
-    j: Json,
-    name: String,
-    args: List[String]
-  ): Json = {
-    def arg(
-      i: Int
-    ) = args.lift(i).getOrElse("")
+  private def apply(j: Json, name: String, args: List[String]): Json = {
+    def arg(i: Int) = args.lift(i).getOrElse("")
     name match {
       case "lower" => mapStr(j)(_.toLowerCase)
       case "upper" => mapStr(j)(_.toUpperCase)
@@ -239,27 +196,16 @@ object Expr {
     }
   }
 
-  def evalPipeline(
-    p: Pipeline,
-    ctx: Json
-  ): Json = {
+  def evalPipeline(p: Pipeline, ctx: Json): Json = {
     val start = p.head match {
       case Term.Path(seg) => lookup(ctx, seg)
       case Term.Lit(s) => Json.fromString(s)
     }
-    p.filters.foldLeft(start)(
-      (
-        j,
-        f
-      ) => apply(j, f._1, f._2)
-    )
+    p.filters.foldLeft(start)((j, f) => apply(j, f._1, f._2))
   }
 
   /** 式を評価する. 式1つだけならその値、文字と混ざれば文字列. 解析できない式は null. */
-  def eval(
-    src: String,
-    ctx: Json
-  ): Json =
+  def eval(src: String, ctx: Json): Json =
     parse(src) match {
       case Left(_) => Json.Null
       case Right(List(Part.Code(p))) => evalPipeline(p, ctx)
@@ -271,7 +217,5 @@ object Expr {
     }
 
   /** 値が「ない」（null・空文字・空のリスト）. */
-  def isEmpty(
-    j: Json
-  ): Boolean = j.isNull || j.asString.exists(_.isEmpty) || j.asArray.exists(_.isEmpty)
+  def isEmpty(j: Json): Boolean = j.isNull || j.asString.exists(_.isEmpty) || j.asArray.exists(_.isEmpty)
 }

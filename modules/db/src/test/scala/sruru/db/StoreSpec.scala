@@ -29,16 +29,10 @@ class StoreSpec extends CatsEffectSuite {
 
   override def munitFixtures = if cfg.isDefined then List(xaFixture) else Nil
 
-  private def withDb(
-    name: String
-  )(
-    body: doobie.Transactor[IO] => IO[Unit]
-  ): Unit =
+  private def withDb(name: String)(body: doobie.Transactor[IO] => IO[Unit]): Unit =
     test(name)(if cfg.isEmpty then IO(assume(false, "TEST_DATABASE_URL が未設定")) else body(xaFixture()))
 
-  private def user(
-    xa: doobie.Transactor[IO]
-  ): IO[sruru.core.User] =
+  private def user(xa: doobie.Transactor[IO]): IO[sruru.core.User] =
     new UserStore(xa).create(NewUser("t-" + UUID.randomUUID().toString.take(8), None, "テスト")).map(_.toOption.get)
 
   withDb("監査ログ: ハッシュの鎖と改ざんの検出") { xa =>

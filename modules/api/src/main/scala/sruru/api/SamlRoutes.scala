@@ -12,16 +12,15 @@ import sruru.saml.*
 import sruru.security.*
 
 /** SAML 2.0 の IdP（HTTP-Redirect・HTTP-POST の SSO、IdP 起点の SSO、SP からのログアウト）. */
-final class SamlRoutes(
-  apps: AppStore,
-  tokens: TokenStore,
-  sessions: SessionStore,
-  dir: Directory,
-  keys: KeyService,
-  gate: AuthGate,
-  val auth: SessionAuth,
-  audit: AuditService,
-  cfg: ApiConfig) extends RouteSupport {
+final class SamlRoutes(apps: AppStore,
+                       tokens: TokenStore,
+                       sessions: SessionStore,
+                       dir: Directory,
+                       keys: KeyService,
+                       gate: AuthGate,
+                       val auth: SessionAuth,
+                       audit: AuditService,
+                       cfg: ApiConfig) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "saml" / "metadata" => getSamlMetadata()
@@ -39,9 +38,7 @@ final class SamlRoutes(
           "*"))
     )
 
-  private def getSamlSso(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getSamlSso(req: Request[IO]): IO[Response[IO]] =
     Saml.redirectParams(rawQuery(req)) match {
       case Left(e) => gate.errorPage(s"SAML の要求を読めません: $e")
       case Right(ps) =>
@@ -50,24 +47,17 @@ final class SamlRoutes(
         )
     }
 
-  private def postSamlSso(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postSamlSso(req: Request[IO]): IO[Response[IO]] =
     req.as[UrlForm].flatMap(f =>
       withCookie(req, f)(f.getFirst("SAMLRequest").fold(gate.errorPage("SAMLRequest がありません"))(p =>
         sso(req, Saml.decodePost(p), f.getFirst("RelayState"), None)
       ))
     )
 
-  private def getSamlIdp(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] =
+  private def getSamlIdp(req: Request[IO], slug: String): IO[Response[IO]] =
     idpInitiated(req, slug)
 
-  private def getSamlSlo(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getSamlSlo(req: Request[IO]): IO[Response[IO]] =
     Saml.redirectParams(rawQuery(req)) match {
       case Left(e) => gate.errorPage(s"SAML のログアウトの要求を読めません: $e")
       case Right(ps) =>
@@ -76,9 +66,7 @@ final class SamlRoutes(
         )
     }
 
-  private def postSamlSlo(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postSamlSlo(req: Request[IO]): IO[Response[IO]] =
     req.as[UrlForm].flatMap(f =>
       withCookie(req, f)(f.getFirst("SAMLRequest").fold(gate.redirect("/logged-out"))(p =>
         slo(req, Saml.decodePost(p), f.getFirst("RelayState"), None)
@@ -89,70 +77,45 @@ final class SamlRoutes(
   private val ssoUrl = s"${cfg.publicUrl}/saml/sso"
   private val sloUrl = s"${cfg.publicUrl}/saml/slo"
 
-  private def html(
-    body: String,
-    nonce: String
-  ): IO[Response[IO]] =
+  private def html(body: String, nonce: String): IO[Response[IO]] =
     Ok(body).map(_.withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
       .putHeaders(
         "Content-Security-Policy" -> s"default-src 'none'; script-src 'nonce-$nonce'; form-action *",
         "Cache-Control" -> "no-store"
       ))
 
-  private def spCert(
-    s: SamlConfig
-  ) = s.spCertificate.flatMap(p => Jose.parseCerts(p).toOption.flatMap(_.headOption))
+  private def spCert(s: SamlConfig) = s.spCertificate.flatMap(p => Jose.parseCerts(p).toOption.flatMap(_.headOption))
 
   /** 要求の発行時刻が ±300 秒に収まるか. */
-  private def fresh(
-    t: java.time.Instant
-  ): Boolean = java.time.Duration.between(t, java.time.Instant.now()).abs.getSeconds <= 300
+  private def fresh(t: java.time.Instant): Boolean =
+    java.time.Duration.between(t, java.time.Instant.now()).abs.getSeconds <= 300
 
   /** SP ごとの SessionIndex（ログインの ID をそのまま出さない. ほかの SP の SessionIndex を推測できないように）. */
-  private def sessionIndex(
-    appId: java.util.UUID,
-    loginId: java.util.UUID
-  ): String =
+  private def sessionIndex(appId: java.util.UUID, loginId: java.util.UUID): String =
     "_" + Crypto.hex(Crypto.sha256(s"sruru-saml-session:$appId:$loginId")).take(40)
 
-  private def nameIdOf(
-    app: Application,
-    s: SamlConfig,
-    u: User,
-    m: Membership
-  ): IO[String] =
+  private def nameIdOf(app: Application, s: SamlConfig, u: User, m: Membership): IO[String] =
     dir.picture(u).map(pic => Expr.render(Expr.eval(s.nameIdExpr, Context.of(Context.user(u, m, pic), Some(app)))))
 
   /**
    * SameSite=Lax の Cookie はほかのサイトからの POST には付かない. Cookie がなければ、同じサイトから POST し直す
    * （ログアウトが空振りしたり、ログインの画面が毎回出たりしないように）.
    */
-  private def withCookie(
-    req: Request[IO],
-    f: UrlForm
-  )(
-    run: => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withCookie(req: Request[IO], f: UrlForm)(run: => IO[Response[IO]]): IO[Response[IO]] =
     if req.cookies.exists(_.name == cfg.cookieName) || f.getFirst("_sruru").isDefined then run
     else {
       val nonce = Crypto.randomToken(12)
-      val fields = f.values.toList.flatMap(
-        (
-          k,
-          vs
-        ) => vs.toList.map(k -> _)
-      ).filter(_._1 != "_sruru") :+ ("_sruru" -> "1")
+      val fields = f.values.toList.flatMap((k, vs) => vs.toList.map(k -> _)).filter(_._1 != "_sruru") :+
+        ("_sruru" -> "1")
       html(Saml.autoPost(req.uri.path.renderString, fields, nonce), nonce)
     }
 
   // ------------------------------------------------------------------ SSO
 
-  private def sso(
-    req: Request[IO],
-    xml: Either[String, String],
-    relay: Option[String],
-    redirectQuery: Option[String]
-  ): IO[Response[IO]] =
+  private def sso(req: Request[IO],
+                  xml: Either[String, String],
+                  relay: Option[String],
+                  redirectQuery: Option[String]): IO[Response[IO]] =
     xml.flatMap(Saml.parseAuthnRequest) match {
       case Left(e) => gate.errorPage(s"SAML の要求を読めません: $e")
       case Right(ar) =>
@@ -188,10 +151,7 @@ final class SamlRoutes(
     }
 
   /** IdP 起点の SSO（ポータルからの起動）. */
-  private def idpInitiated(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] =
+  private def idpInitiated(req: Request[IO], slug: String): IO[Response[IO]] =
     apps.bySlug(slug).flatMap {
       case Some(app) if app.protocol == "saml" =>
         // RelayState は仕様の上限（80 バイト）まで
@@ -205,10 +165,7 @@ final class SamlRoutes(
     }
 
   /** ログインの後に、署名したアサーションを SP へ POST する. */
-  def resume(
-    req: Request[IO],
-    r: AuthRequest
-  ): IO[Response[IO]] = {
+  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = {
     val pc = r.params.hcursor
     (apps.find(r.appId), apps.saml(r.appId)).tupled.flatMap {
       case (Some(app), Some(s)) =>
@@ -216,16 +173,9 @@ final class SamlRoutes(
         val relay = pc.get[String]("relayState").toOption
         val passive = pc.get[Boolean]("isPassive").getOrElse(false)
         val force = pc.get[Boolean]("forceAuthn").getOrElse(false)
-        def errorToSp(
-          status: String,
-          sub: Option[String],
-          msg: String
-        ): IO[Response[IO]] =
+        def errorToSp(status: String, sub: Option[String], msg: String): IO[Response[IO]] =
           (keys.saml, Time.now).flatMapN {
-            (
-              k,
-              now
-            ) =>
+            (k, now) =>
               val xml = Saml.buildErrorResponse(
                 entityId,
                 s.acsUrl,
@@ -306,12 +256,10 @@ final class SamlRoutes(
 
   // ------------------------------------------------------------------ ログアウト
 
-  private def slo(
-    req: Request[IO],
-    xml: Either[String, String],
-    relay: Option[String],
-    redirectQuery: Option[String]
-  ): IO[Response[IO]] =
+  private def slo(req: Request[IO],
+                  xml: Either[String, String],
+                  relay: Option[String],
+                  redirectQuery: Option[String]): IO[Response[IO]] =
     xml.flatMap(Saml.parseLogoutRequest) match {
       case Left(e) => gate.errorPage(s"SAML のログアウトの要求を読めません: $e")
       case Right(lr) =>
@@ -336,11 +284,7 @@ final class SamlRoutes(
                 // SessionIndex（この SP に出したもの）が合うときにログアウトする. 署名を確かめた要求に限り、SessionIndex がなければ
                 // NameID が使用中のアカウントのものと同じときだけ（他人の署名付きの要求を使い回すログアウトの CSRF を防ぐ）
                 done <- act.flatTraverse {
-                  (
-                    bs,
-                    l,
-                    u
-                  ) =>
+                  (bs, l, u) =>
                     val byIndex = lr.sessionIndexes.contains(sessionIndex(app.id, l.id))
                     val byName: IO[Boolean] =
                       if byIndex || lr.sessionIndexes.nonEmpty || !s.wantSignedRequests then IO.pure(false)
@@ -365,10 +309,7 @@ final class SamlRoutes(
                 res <- s.sloUrl match {
                   case Some(dest) =>
                     (keys.saml, Time.now).flatMapN {
-                      (
-                        k,
-                        now
-                      ) =>
+                      (k, now) =>
                         // 実際にログアウトしたときだけ Success（ログアウトしたと SP に誤って伝えない）
                         val st = if done.isDefined then Saml.StatusSuccess else Saml.StatusResponder
                         val out = Saml.buildLogoutResponse(entityId, dest, lr.id, st, now, k.privateKey, k.cert.get)
@@ -383,8 +324,6 @@ final class SamlRoutes(
 
   // ------------------------------------------------------------------ ルート
 
-  private def rawQuery(
-    req: Request[IO]
-  ): String = req.uri.query.renderString
+  private def rawQuery(req: Request[IO]): String = req.uri.query.renderString
 
 }

@@ -12,9 +12,7 @@ object PasswordCheck {
       finally in.close()
     }
 
-  private def classes(
-    pw: String
-  ): Int =
+  private def classes(pw: String): Int =
     List(
       pw.exists(_.isUpper),
       pw.exists(_.isLower),
@@ -23,11 +21,7 @@ object PasswordCheck {
     ).count(identity)
 
   /** 満たしていない条件の説明（空なら OK）. userInfo はユーザー名・メールの @ の前・名前. */
-  def violations(
-    pw: String,
-    p: PasswordPolicy,
-    userInfo: List[String] = Nil
-  ): List[String] = {
+  def violations(pw: String, p: PasswordPolicy, userInfo: List[String] = Nil): List[String] = {
     val cps = pw.codePointCount(0, pw.length)
     List(
       Option.when(cps < p.minLength)(s"${p.minLength}文字以上にしてください"),
@@ -46,9 +40,7 @@ object PasswordCheck {
   }
 
   /** ポリシーの説明（画面に出す）. */
-  def describe(
-    p: PasswordPolicy
-  ): List[String] =
+  def describe(p: PasswordPolicy): List[String] =
     List(
       Some(s"${p.minLength}文字以上"),
       Option.when(p.minClasses > 1)(s"英大文字・英小文字・数字・記号のうち${p.minClasses}種類以上"),

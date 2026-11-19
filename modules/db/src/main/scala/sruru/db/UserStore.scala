@@ -14,34 +14,31 @@ import java.time.Instant
 import java.util.UUID
 
 /** 新しいユーザー. */
-final case class NewUser(
-  username: String,
-  email: Option[String],
-  name: String,
-  givenName: Option[String] = None,
-  familyName: Option[String] = None,
-  passwordHash: Option[String] = None,
-  mustChangePassword: Boolean = false,
-  isAdmin: Boolean = false,
-  isService: Boolean = false,
-  emailVerified: Boolean = false,
-  attributes: Json = Json.obj(),
-  source: String = "local",
-  externalId: Option[String] = None,
-  pictureUrl: Option[String] = None)
+final case class NewUser(username: String,
+                         email: Option[String],
+                         name: String,
+                         givenName: Option[String] = None,
+                         familyName: Option[String] = None,
+                         passwordHash: Option[String] = None,
+                         mustChangePassword: Boolean = false,
+                         isAdmin: Boolean = false,
+                         isService: Boolean = false,
+                         emailVerified: Boolean = false,
+                         attributes: Json = Json.obj(),
+                         source: String = "local",
+                         externalId: Option[String] = None,
+                         pictureUrl: Option[String] = None)
 
 /** ユーザーの一覧の絞り込み. */
-final case class UserQuery(
-  q: Option[String] = None,
-  status: Option[String] = None,
-  groupId: Option[UUID] = None,
-  source: Option[String] = None,
-  limit: Int = 50,
-  offset: Int = 0)
+final case class UserQuery(q: Option[String] = None,
+                           status: Option[String] = None,
+                           groupId: Option[UUID] = None,
+                           source: Option[String] = None,
+                           limit: Int = 50,
+                           offset: Int = 0)
 
 /** ユーザー・パスワード・ロック・アイコン. */
-final class UserStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
   import Codecs.given
 
   private val cols =
@@ -50,44 +47,27 @@ final class UserStore(
     u.attributes, u.avatar_updated_at, u.picture_url, u.source, u.external_id, u.locale, u.zoneinfo, u.phone_number,
     u.created_at, u.updated_at, u.last_login_at"""
 
-  private def select(
-    where: Fragment
-  ): Query0[User] = (fr"select" ++ cols ++ fr"from users u" ++ where).query[User]
+  private def select(where: Fragment): Query0[User] = (fr"select" ++ cols ++ fr"from users u" ++ where).query[User]
 
-  def find(
-    id: UUID
-  ): IO[Option[User]] = tx(findC(id))
-  def findC(
-    id: UUID
-  ): ConnectionIO[Option[User]] = select(fr"where u.id = $id").option
+  def find(id: UUID): IO[Option[User]] = tx(findC(id))
+  def findC(id: UUID): ConnectionIO[Option[User]] = select(fr"where u.id = $id").option
 
-  def findMany(
-    ids: List[UUID]
-  ): IO[List[User]] =
+  def findMany(ids: List[UUID]): IO[List[User]] =
     if ids.isEmpty then IO.pure(Nil) else tx(select(fr"where u.id = any(${ids.toArray})").to[List])
 
-  def byUsername(
-    username: String
-  ): IO[Option[User]] = tx(select(fr"where lower(u.username) = lower($username)").option)
+  def byUsername(username: String): IO[Option[User]] = tx(select(fr"where lower(u.username) = lower($username)").option)
 
-  def byEmail(
-    email: String
-  ): IO[List[User]] = tx(select(fr"where lower(u.email) = lower($email)").to[List])
+  def byEmail(email: String): IO[List[User]] = tx(select(fr"where lower(u.email) = lower($email)").to[List])
 
   /** ログインの名前（ユーザー名、またはメールアドレスで1人に決まるとき）. */
-  def byLoginName(
-    s: String
-  ): IO[Option[User]] =
+  def byLoginName(s: String): IO[Option[User]] =
     byUsername(s).flatMap {
       case Some(u) => IO.pure(Some(u))
       case None if s.contains('@') => byEmail(s).map { case List(u) => Some(u); case _ => None }
       case None => IO.pure(None)
     }
 
-  def byExternal(
-    source: String,
-    externalId: String
-  ): IO[Option[User]] =
+  def byExternal(source: String, externalId: String): IO[Option[User]] =
     tx(select(fr"where u.source = $source and u.external_id = $externalId").option)
 
   def all: IO[List[User]] = tx(select(fr"order by u.username").to[List])
@@ -96,10 +76,7 @@ final class UserStore(
 
   def adminCount: IO[Int] = tx(sql"select count(*) from users where is_admin and not disabled".query[Int].unique)
 
-  def list(
-    q: UserQuery,
-    now: Instant
-  ): IO[(List[User], Int)] = {
+  def list(q: UserQuery, now: Instant): IO[(List[User], Int)] = {
     val conds = List(
       q.q.map(_.trim).filter(_.nonEmpty).map { s =>
         val like = "%" + s.toLowerCase.replace("%", "\\%").replace("_", "\\_") + "%"
@@ -125,9 +102,7 @@ final class UserStore(
     } yield (rows, total))
   }
 
-  def create(
-    n: NewUser
-  ): IO[Either[AppError, User]] = {
+  def create(n: NewUser): IO[Either[AppError, User]] = {
     val id = UUID.randomUUID()
     val now = Instant.now()
     tx(
@@ -150,9 +125,7 @@ final class UserStore(
   }
 
   /** プロフィール・権限など、パスワード以外の項目を保存する. */
-  def save(
-    u: User
-  ): IO[Either[AppError, User]] = tx(
+  def save(u: User): IO[Either[AppError, User]] = tx(
     sql"select exists(select 1 from users where lower(username) = lower(${u.username}) and id <> ${u.id})".query[
       Boolean
     ].unique.flatMap {
@@ -167,19 +140,12 @@ final class UserStore(
     }
   )
 
-  def delete(
-    id: UUID
-  ): IO[Boolean] = tx(sql"delete from users where id = $id".update.run.map(_ > 0))
+  def delete(id: UUID): IO[Boolean] = tx(sql"delete from users where id = $id".update.run.map(_ > 0))
 
   // ------------------------------------------------------------------ パスワード
 
   /** パスワードを変える（履歴に残し、keep 件より古い履歴は消す）. */
-  def setPassword(
-    id: UUID,
-    hash: Option[String],
-    mustChange: Boolean,
-    keep: Int
-  ): IO[Unit] = tx(
+  def setPassword(id: UUID, hash: Option[String], mustChange: Boolean, keep: Int): IO[Unit] = tx(
     sql"""update users set password_hash = $hash, password_changed_at = now(), must_change_password = $mustChange,
             failed_attempts = 0, locked_until = null, updated_at = now() where id = $id""".update.run *>
       hash.traverse_(h => sql"insert into password_history (user_id, hash) values ($id, $h)".update.run) *>
@@ -190,10 +156,7 @@ final class UserStore(
         )})""".update.run.void
   )
 
-  def passwordHistory(
-    id: UUID,
-    n: Int
-  ): IO[List[String]] =
+  def passwordHistory(id: UUID, n: Int): IO[List[String]] =
     tx(sql"select hash from password_history where user_id = $id order by created_at desc limit $n".query[
       String
     ].to[List])
@@ -201,40 +164,28 @@ final class UserStore(
   // ------------------------------------------------------------------ ロック
 
   /** 失敗を数える. max 回に達したら until までロックする（until が None なら管理者が解除するまで = 遠い未来）. 新しい失敗回数とロックの期限. */
-  def recordFailure(
-    id: UUID,
-    max: Int,
-    until: Instant
-  ): IO[(Int, Option[Instant])] = tx(
+  def recordFailure(id: UUID, max: Int, until: Instant): IO[(Int, Option[Instant])] = tx(
     sql"""update users set failed_attempts = failed_attempts + 1,
             locked_until = case when $max > 0 and failed_attempts + 1 >= $max then $until else locked_until end
           where id = $id returning failed_attempts, locked_until""".query[(Int, Option[Instant])].unique
   )
 
-  def unlock(
-    id: UUID
-  ): IO[Unit] = tx(
+  def unlock(id: UUID): IO[Unit] = tx(
     sql"update users set failed_attempts = 0, locked_until = null, updated_at = now() where id = $id".update.run.void
   )
 
-  def touchLogin(
-    id: UUID
-  ): IO[Unit] = tx(sql"update users set last_login_at = now(), failed_attempts = 0 where id = $id".update.run.void)
+  def touchLogin(id: UUID): IO[Unit] =
+    tx(sql"update users set last_login_at = now(), failed_attempts = 0 where id = $id".update.run.void)
 
   // ------------------------------------------------------------------ アイコン
 
-  def avatar(
-    id: UUID
-  ): IO[Option[(Array[Byte], String)]] =
+  def avatar(id: UUID): IO[Option[(Array[Byte], String)]] =
     tx(sql"select avatar, avatar_type from users where id = $id and avatar is not null".query[(
       Array[Byte],
       String
     )].option)
 
-  def setAvatar(
-    id: UUID,
-    data: Option[(Array[Byte], String)]
-  ): IO[Unit] = tx(
+  def setAvatar(id: UUID, data: Option[(Array[Byte], String)]): IO[Unit] = tx(
     sql"""update users set avatar = ${data.map(_._1)}, avatar_type = ${data.map(_._2)},
             avatar_updated_at = ${data.map(_ => Instant.now())}, updated_at = now() where id = $id""".update.run.void
   )
@@ -246,16 +197,13 @@ final class UserStore(
       AttributeDef
     ].to[List])
 
-  def putAttributeDef(
-    d: AttributeDef
-  ): IO[Unit] = tx(
+  def putAttributeDef(d: AttributeDef): IO[Unit] = tx(
     sql"""insert into attribute_defs (key, label, kind, description, user_editable, required, scim_path, sort)
           values (${d.key}, ${d.label}, ${d.kind}, ${d.description}, ${d.userEditable}, ${d.required}, ${d.scimPath}, ${d.sort})
           on conflict (key) do update set label = excluded.label, kind = excluded.kind, description = excluded.description,
             user_editable = excluded.user_editable, required = excluded.required, scim_path = excluded.scim_path, sort = excluded.sort""".update.run.void
   )
 
-  def deleteAttributeDef(
-    key: String
-  ): IO[Boolean] = tx(sql"delete from attribute_defs where key = $key".update.run.map(_ > 0))
+  def deleteAttributeDef(key: String): IO[Boolean] =
+    tx(sql"delete from attribute_defs where key = $key".update.run.map(_ > 0))
 }

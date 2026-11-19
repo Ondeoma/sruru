@@ -9,10 +9,7 @@ import sruru.db.*
 
 /** クレーム（ID トークン・UserInfo）を作る. */
 object Claims {
-  def sub(
-    u: User,
-    c: OidcClientConfig
-  ): String = c.subMode match {
+  def sub(u: User, c: OidcClientConfig): String = c.subMode match {
     case "username" => u.username
     // 確認済みのアドレスだけ（未確認のアドレスは本人が自由に書けるので、他人の sub を名乗れてしまう）
     case "email" => u.email.filter(_ => u.emailVerified).getOrElse(u.id.toString)
@@ -25,23 +22,11 @@ final class Claims(
   apps: AppStore,
   /** ロゴの URL を作るときの sruru の公開 URL */
   publicUrl: String = "") {
-  def sub(
-    u: User,
-    c: OidcClientConfig
-  ): String = Claims.sub(u, c)
+  def sub(u: User, c: OidcClientConfig): String = Claims.sub(u, c)
 
-  def build(
-    u: User,
-    m: Membership,
-    app: Application,
-    c: OidcClientConfig,
-    scopes: Set[String]
-  ): IO[Json] =
+  def build(u: User, m: Membership, app: Application, c: OidcClientConfig, scopes: Set[String]): IO[Json] =
     (apps.mappings(app.id), appNames(m, app, c)).mapN {
-      (
-        ms,
-        sbirds
-      ) =>
+      (ms, sbirds) =>
         val pic = dir.claimPicture(u)
         val base = List("sub" -> sub(u, c).asJson)
         val profile = if scopes("profile") then
@@ -72,20 +57,11 @@ final class Claims(
    * sbirds のサービス向けのアプリケーションの表示名（includeAppNames のクライアントだけ）.
    * sbirds_apps: 使えるアプリケーションの slug → 表示名、sbirds_app: このアプリケーション自身の表示名（グループの上書きを反映）.
    */
-  private def appNames(
-    m: Membership,
-    app: Application,
-    c: OidcClientConfig
-  ): IO[List[(String, Json)]] =
+  private def appNames(m: Membership, app: Application, c: OidcClientConfig): IO[List[(String, Json)]] =
     if (!c.includeAppNames) IO.pure(Nil)
     else
       (apps.all, apps.allAccessGroups, apps.displayNames(m.ids), apps.displayLogos(m.ids)).mapN {
-        (
-          as,
-          access,
-          names,
-          logos
-        ) =>
+        (as, access, names, logos) =>
           val usable =
             as.filter(a => a.enabled && (!a.restrictAccess || access.getOrElse(a.id, Nil).exists(m.ids.contains)))
           List(
@@ -97,10 +73,7 @@ final class Claims(
           )
       }
 
-  private def logoUrl(
-    a: Application,
-    logos: Map[java.util.UUID, String]
-  ): Option[String] =
+  private def logoUrl(a: Application, logos: Map[java.util.UUID, String]): Option[String] =
     logos.get(a.id).map(id => s"$publicUrl/brand-logos/$id")
       .orElse(a.iconUpdatedAt.map(t => s"$publicUrl/app-icons/${a.id}?v=${t.getEpochSecond}"))
 }

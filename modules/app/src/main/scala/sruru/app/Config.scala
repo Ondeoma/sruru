@@ -7,18 +7,10 @@ import sbirds.mail.SmtpConfig
 
 /** 設定は環境変数から読む. */
 object Config {
-  private def opt(
-    name: String
-  ): Option[String] = sys.env.get(name).map(_.trim).filter(_.nonEmpty)
-  private def int(
-    name: String
-  ): Option[Int] = opt(name).flatMap(_.toIntOption)
-  private def enabled(
-    name: String
-  ): Boolean = opt(name).exists(_.equalsIgnoreCase("true"))
-  private def required(
-    name: String
-  ): Either[String, String] = opt(name).toRight(s"環境変数 $name を設定してください")
+  private def opt(name: String): Option[String] = sys.env.get(name).map(_.trim).filter(_.nonEmpty)
+  private def int(name: String): Option[Int] = opt(name).flatMap(_.toIntOption)
+  private def enabled(name: String): Boolean = opt(name).exists(_.equalsIgnoreCase("true"))
+  private def required(name: String): Either[String, String] = opt(name).toRight(s"環境変数 $name を設定してください")
 
   def load: IO[AppConfig] = IO.fromEither(
     (for {

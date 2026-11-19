@@ -49,17 +49,12 @@ class SiteIconSpec extends CatsEffectSuite {
   }
 
   /** 偽のサイト. */
-  private def site(
-    routes: PartialFunction[String, IO[Response[IO]]]
-  ): Client[IO] =
+  private def site(routes: PartialFunction[String, IO[Response[IO]]]): Client[IO] =
     Client.fromHttpApp(HttpApp[IO](req =>
       routes.applyOrElse(req.uri.renderString, (_: String) => IO.pure(Response[IO](Status.NotFound)))
     ))
 
-  private def body(
-    b: Array[Byte],
-    ct: String = "application/octet-stream"
-  ) =
+  private def body(b: Array[Byte], ct: String = "application/octet-stream") =
     IO.pure(Response[IO](
       Status.Ok
     ).withEntity(b)(using EntityEncoder.byteArrayEncoder).withContentType(`Content-Type`(MediaType.unsafeParse(ct))))

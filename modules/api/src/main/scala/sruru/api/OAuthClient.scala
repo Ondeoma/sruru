@@ -7,12 +7,11 @@ import sruru.shared.*
  * OAuth（/oauth/…）で連携する兄弟のサービス（skakapo など. 環境変数 OAUTH_CLIENTS で登録する）.
  * redirectUri は完全一致で照合する. sruru は管理の基盤なので、渡せるスコープは read だけ.
  */
-final case class OAuthClient(
-  id: String,
-  secret: String,
-  redirectUri: String,
-  name: String,
-  scopes: List[String] = List(TokenScopes.Read))
+final case class OAuthClient(id: String,
+                             secret: String,
+                             redirectUri: String,
+                             name: String,
+                             scopes: List[String] = List(TokenScopes.Read))
 
 object OAuthClient {
 
@@ -30,9 +29,7 @@ object OAuthClient {
   )
 
   /** OAUTH_CLIENTS（JSON の配列）を読む. */
-  def parse(
-    json: String
-  ): Either[String, List[OAuthClient]] =
+  def parse(json: String): Either[String, List[OAuthClient]] =
     io.circe.parser.decode[List[OAuthClient]](json).left.map(e =>
       s"OAUTH_CLIENTS の形式が正しくありません: ${e.getMessage}"
     ).flatMap { cs =>

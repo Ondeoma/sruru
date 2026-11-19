@@ -16,21 +16,20 @@ import sruru.shared.*
 import java.util.UUID
 
 /** 自分の情報・セキュリティの設定・API トークン. */
-final class MeRoutes(
-  dir: Directory,
-  factors: FactorStore,
-  sessions: SessionStore,
-  tokens: TokenStore,
-  apps: AppStore,
-  fedStore: FederationStore,
-  login: LoginService,
-  mail: MailService,
-  policies: PolicyService,
-  audit: AuditService,
-  box: SecretBox,
-  settings: SettingsStore,
-  val auth: SessionAuth,
-  cfg: ApiConfig)
+final class MeRoutes(dir: Directory,
+                     factors: FactorStore,
+                     sessions: SessionStore,
+                     tokens: TokenStore,
+                     apps: AppStore,
+                     fedStore: FederationStore,
+                     login: LoginService,
+                     mail: MailService,
+                     policies: PolicyService,
+                     audit: AuditService,
+                     box: SecretBox,
+                     settings: SettingsStore,
+                     val auth: SessionAuth,
+                     cfg: ApiConfig)
   extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
@@ -66,29 +65,21 @@ final class MeRoutes(
 
   // ------------------------------------------------------------------ ポリシーの編集を任されたグループ
 
-  private def delegated(
-    p: Principal
-  ): IO[List[Group]] =
+  private def delegated(p: Principal): IO[List[Group]] =
     dir.groups.policyEditableBy(
       p.user.id,
       p.membership.ids
     ).flatMap(dir.groups.findMany).map(_.sortBy(_.name.toLowerCase))
 
-  private def delegatedDto(
-    g: Group
-  ): DelegatedGroupDto = DelegatedGroupDto(g.id, g.name, g.description, g.policy.getOrElse(GroupPolicy()))
+  private def delegatedDto(g: Group): DelegatedGroupDto =
+    DelegatedGroupDto(g.id, g.name, g.description, g.policy.getOrElse(GroupPolicy()))
 
   /** 自分がポリシーを編集できるグループ（管理者が付与したもの. 本人か、所属するグループに付与されている）. */
-  private def getMePolicyGroups(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMePolicyGroups(req: Request[IO]): IO[Response[IO]] =
     webOnly(req)(p => delegated(p).flatMap(gs => Ok(gs.map(delegatedDto))))
 
   /** 任されたグループのロゴ（表示の上書き）にする画像を上げる. 使うには、返った ID をポリシーに入れて保存する. */
-  private def postMePolicyGroupLogo(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postMePolicyGroupLogo(req: Request[IO], id: UUID): IO[Response[IO]] =
     webOnly(req)(p =>
       delegated(p).map(_.find(_.id == id)).flatMap {
         case None => err(ErrorCode.PolicyEditForbidden)
@@ -111,10 +102,7 @@ final class MeRoutes(
     )
 
   /** 任されたグループのポリシーだけを変える（名前・メンバーなどは変えられない）. 監査ログに残す. */
-  private def putMePolicyGroup(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putMePolicyGroup(req: Request[IO], id: UUID): IO[Response[IO]] =
     webOnly(req)(p =>
       body[DelegatedPolicyReq](req)(r =>
         delegated(p).map(_.find(_.id == id)).flatMap {
@@ -140,19 +128,13 @@ final class MeRoutes(
       )
     )
 
-  private def getMe(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMe(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => me(p.user).flatMap(Ok(_)))
 
-  private def putMe(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def putMe(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => body[MeUpdateReq](req)(r => ctx(req).flatMap(c => okJson(updateMe(p, r, c)))))
 
-  private def postMeAvatar(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeAvatar(req: Request[IO]): IO[Response[IO]] =
     authed(req) { p =>
       Conv.readImage(req, cfg.maxAvatarBytes).flatMap {
         case Left(e) => err(ErrorCode.InvalidInput, e)
@@ -161,30 +143,19 @@ final class MeRoutes(
       }
     }
 
-  private def deleteMeAvatar(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteMeAvatar(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => dir.users.setAvatar(p.id, None) *> NoContent())
 
-  private def postMePassword(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMePassword(req: Request[IO]): IO[Response[IO]] =
     webOnly(req)(p => body[PasswordChangeReq](req)(r => ctx(req).flatMap(c => noContent(changePassword(p, r, c)))))
 
-  private def postMeTotp(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeTotp(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req)(p => startTotp(p).flatMap(Ok(_)))
 
-  private def postMeTotpVerify(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeTotpVerify(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req)(p => body[TotpVerifyReq](req)(r => ctx(req).flatMap(c => okJson(verifyTotp(p, r, c)))))
 
-  private def deleteMeTotp(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteMeTotp(req: Request[IO], id: UUID): IO[Response[IO]] =
     recentAuth(req) { p =>
       (dir.membership(p.user).flatMap(m => dir.policyFor(p.user, m).map(m -> _)), factors.totps(p.id)).flatMapN {
         case ((m, pol), ts) =>
@@ -201,22 +172,16 @@ final class MeRoutes(
       }
     }
 
-  private def postMeRecoveryCodes(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeRecoveryCodes(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req)(p =>
       login.newRecoveryCodes(p.id).flatTap(_ => audited(audit, req, p, "mfa.recovery.regenerate"))
         .flatMap(cs => Ok(RecoveryCodesDto(cs)))
     )
 
-  private def getMeApps(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMeApps(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => portal(p.user, p.membership).flatMap(Ok(_)))
 
-  private def putMeAppsOrder(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def putMeAppsOrder(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p =>
       body[AppOrderReq](req) { r =>
         if r.appIds.size > 1000 then err(ErrorCode.TooManyAuthenticators)
@@ -224,33 +189,24 @@ final class MeRoutes(
       }
     )
 
-  private def deleteMeAppsOrder(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteMeAppsOrder(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => apps.clearAppOrder(p.id) *> NoContent())
 
-  private def getMeSessions(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMeSessions(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p =>
       Time.now.flatMap(now => sessions.loginsOfUser(p.id, now)).flatMap(ls =>
         Ok(ls.map(Conv.session(_, p.login.map(_.id))))
       )
     )
 
-  private def deleteMeSessions(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def deleteMeSessions(req: Request[IO]): IO[Response[IO]] =
     authed(req) { p =>
       // いま使っている端末以外のログインをすべて終わらせる
       dir.revokeEverything(p.user, p.login.map(_.id)) *>
         audited(audit, req, p, "session.revoke_others") *> NoContent()
     }
 
-  private def deleteMeSession(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteMeSession(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req) { p =>
       sessions.login(id).flatMap {
         case Some(l) if l.userId == p.id =>
@@ -260,20 +216,13 @@ final class MeRoutes(
       }
     }
 
-  private def getMeTokens(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMeTokens(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => factors.tokens(p.id).flatMap(ts => Ok(ts.map(Conv.token(_)))))
 
-  private def postMeTokens(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeTokens(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req)(p => body[TokenReq](req)(r => ctx(req).flatMap(c => okJson(newToken(p.user, p, r, c)))))
 
-  private def deleteMeToken(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteMeToken(req: Request[IO], id: UUID): IO[Response[IO]] =
     authed(req)(p =>
       factors.deleteToken(id, Some(p.id)).flatMap(ok =>
         if ok then audited(audit, req, p, "token.delete", Some(("token", id.toString, ""))) *> NoContent()
@@ -281,59 +230,29 @@ final class MeRoutes(
       )
     )
 
-  private def getMeConsents(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMeConsents(req: Request[IO]): IO[Response[IO]] =
     authed(req) { p =>
       (apps.consents(p.id), Time.now.flatMap(now => tokens.grantsOf(p.id, now)), apps.all).flatMapN {
-        (
-          cs,
-          gs,
-          as
-        ) =>
-          val byApp =
-            (cs.map(
-              (
-                a,
-                s,
-                t
-              ) => (a, s, t)
-            ) ++ gs.map(
-              (
-                a,
-                s,
-                t
-              ) => (a, s, t)
-            )).groupBy(_._1)
-          Ok(byApp.toList.flatMap(
-            (
-              aid,
-              rows
-            ) =>
-              as.find(_.id == aid).map(a =>
-                ConsentDto(login.appBrief(a), rows.flatMap(_._2).distinct, rows.map(_._3).max)
-              )
+        (cs, gs, as) =>
+          val byApp = (cs.map((a, s, t) => (a, s, t)) ++ gs.map((a, s, t) => (a, s, t))).groupBy(_._1)
+          Ok(byApp.toList.flatMap((aid, rows) =>
+            as.find(_.id == aid).map(a =>
+              ConsentDto(login.appBrief(a), rows.flatMap(_._2).distinct, rows.map(_._3).max)
+            )
           ))
       }
     }
 
-  private def deleteMeConsent(
-    req: Request[IO],
-    appId: UUID
-  ): IO[Response[IO]] =
+  private def deleteMeConsent(req: Request[IO], appId: UUID): IO[Response[IO]] =
     authed(req)(p =>
       apps.deleteConsent(p.id, appId) *> tokens.revokeUser(p.id, Some(appId)) *>
         audited(audit, req, p, "consent.revoke", Some(("application", appId.toString, ""))) *> NoContent()
     )
 
-  private def getMeCerts(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getMeCerts(req: Request[IO]): IO[Response[IO]] =
     authed(req)(p => factors.userCerts(p.id).flatMap(cs => Ok(cs.map(Conv.cert))))
 
-  private def postMeCerts(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeCerts(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req)(p =>
       body[CertReq](req)(r =>
         ctx(req).flatMap(c =>
@@ -344,29 +263,21 @@ final class MeRoutes(
       )
     )
 
-  private def deleteMeCert(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteMeCert(req: Request[IO], id: UUID): IO[Response[IO]] =
     recentAuth(req)(p =>
       factors.deleteUserCert(id, Some(p.id)).flatMap(ok =>
         if ok then NoContent() else err(ErrorCode.ItemNotFound)
       )
     )
 
-  private def postMeEmailVerify(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeEmailVerify(req: Request[IO]): IO[Response[IO]] =
     recentAuth(req) { p =>
       p.user.email match {
         case None => err(ErrorCode.EmailNotRegistered)
         case Some(e) =>
           val t = Crypto.randomToken()
           (dir.policyFor(p.user), Time.now).flatMapN {
-            (
-              pol,
-              now
-            ) =>
+            (pol, now) =>
               factors.createEmailToken(p.id, "verify", EmailBinding.hash(t, e), now.plusSeconds(24 * 3600)) *>
                 mail.send(
                   e,
@@ -378,9 +289,7 @@ final class MeRoutes(
       }
     }
 
-  private def postMeEmailConfirm(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMeEmailConfirm(req: Request[IO]): IO[Response[IO]] =
     webOnly(req) { p =>
       body[Json](req) { j =>
         val t = j.hcursor.get[String]("token").getOrElse("")
@@ -401,9 +310,7 @@ final class MeRoutes(
       }
     }
 
-  def me(
-    u: User
-  ): IO[MeDto] =
+  def me(u: User): IO[MeDto] =
     for {
       m <- dir.membership(u)
       p <- dir.policyFor(u, m)
@@ -440,18 +347,9 @@ final class MeRoutes(
     )
 
   /** ポータルに出すアプリ（使えるものだけ）. 本人が並べ替えた順. 並べ替えた後に増えたアプリは後ろに名前の順. */
-  def portal(
-    u: User,
-    m: Membership
-  ): IO[List[AppBriefDto]] =
+  def portal(u: User, m: Membership): IO[List[AppBriefDto]] =
     (apps.all, apps.allAccessGroups, apps.appOrder(u.id), apps.displayNames(m.ids), apps.displayLogos(m.ids)).mapN {
-      (
-        as,
-        access,
-        order,
-        names,
-        logos
-      ) =>
+      (as, access, order, names, logos) =>
         val pos = order.zipWithIndex.toMap
         as.filter(a =>
           a.enabled && a.showInPortal && (!a.restrictAccess || access.getOrElse(a.id, Nil).exists(m.ids.contains))
@@ -462,19 +360,10 @@ final class MeRoutes(
             val b = login.appBrief(a.copy(name = names.getOrElse(a.id, a.name)))
             logos.get(a.id).fold(b)(l => b.copy(iconUrl = Some(s"/brand-logos/$l")))
           }.filter(_.launchUrl.isDefined)
-          .zipWithIndex.sortBy(
-            (
-              a,
-              i
-            ) => (pos.getOrElse(a.id, Int.MaxValue), i)
-          ).map(_._1)
+          .zipWithIndex.sortBy((a, i) => (pos.getOrElse(a.id, Int.MaxValue), i)).map(_._1)
     }
 
-  private def updateMe(
-    p: Principal,
-    r: MeUpdateReq,
-    c: ReqCtx
-  ): Res[MeDto] =
+  private def updateMe(p: Principal, r: MeUpdateReq, c: ReqCtx): Res[MeDto] =
     for {
       defs <- dir.users.attributeDefs
       res <- (
@@ -517,17 +406,10 @@ final class MeRoutes(
     } yield res
 
   /** 他のユーザーが使っていないメールアドレスか. */
-  private def emailFree(
-    email: Option[String],
-    self: UUID
-  ): IO[Boolean] =
+  private def emailFree(email: Option[String], self: UUID): IO[Boolean] =
     email.fold(IO.pure(true))(e => dir.users.byEmail(e).map(_.forall(_.id == self)))
 
-  private def changePassword(
-    p: Principal,
-    r: PasswordChangeReq,
-    c: ReqCtx
-  ): Res[Unit] =
+  private def changePassword(p: Principal, r: PasswordChangeReq, c: ReqCtx): Res[Unit] =
     p.user.passwordHash match {
       case Some(h) if !Passwords.verify(r.current, h) =>
         audit.byPrincipal(c, p, "user.password.change", audit.userTarget(p.user), success = false) *>
@@ -540,9 +422,7 @@ final class MeRoutes(
         }
     }
 
-  private def startTotp(
-    p: Principal
-  ): IO[TotpSetupDto] =
+  private def startTotp(p: Principal): IO[TotpSetupDto] =
     dir.policyFor(p.user).flatMap { pol =>
       val secret = Totp.newSecret()
       factors.deleteUnconfirmedTotps(p.id) *> factors.addTotp(p.id, "認証アプリ", box.encrypt(secret)).map(d =>
@@ -550,11 +430,7 @@ final class MeRoutes(
       )
     }
 
-  private def verifyTotp(
-    p: Principal,
-    r: TotpVerifyReq,
-    c: ReqCtx
-  ): Res[RecoveryCodesDto] =
+  private def verifyTotp(p: Principal, r: TotpVerifyReq, c: ReqCtx): Res[RecoveryCodesDto] =
     factors.totp(r.id).flatMap {
       case Some(d) if d.userId == p.id && !d.confirmed =>
         Time.now.flatMap { now =>
@@ -572,12 +448,7 @@ final class MeRoutes(
       case _ => Res.fail(ErrorCode.MfaEnrollRestart)
     }
 
-  def newToken(
-    owner: User,
-    by: Principal,
-    r: TokenReq,
-    c: ReqCtx
-  ): Res[CreatedTokenDto] =
+  def newToken(owner: User, by: Principal, r: TokenReq, c: ReqCtx): Res[CreatedTokenDto] =
     if (r.scopes.contains(TokenScopes.Admin) || r.scopes.contains(TokenScopes.Scim)) && !by.canAdmin then
       Res.fail(ErrorCode.ApiTokenAdminScopeAdminOnly)
     else
@@ -593,19 +464,13 @@ final class MeRoutes(
           ).as(Right(CreatedTokenDto(t, Conv.token(tk))))
       }
 
-  def addCert(
-    userId: UUID,
-    pem: String
-  ): Res[UserCertDto] =
+  def addCert(userId: UUID, pem: String): Res[UserCertDto] =
     ClientCerts.fromHeader(pem) match {
       case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
       case Right(cert) => saveCert(userId, cert)
     }
 
-  private def saveCert(
-    userId: UUID,
-    cert: java.security.cert.X509Certificate
-  ): Res[UserCertDto] = {
+  private def saveCert(userId: UUID, cert: java.security.cert.X509Certificate): Res[UserCertDto] = {
     val i = ClientCerts.info(cert)
     factors.addUserCert(userId, i.fingerprint, i.subject, i.issuer, i.notAfter).map(_.map(Conv.cert))
   }
@@ -614,17 +479,9 @@ final class MeRoutes(
    * 本人による証明書の登録: この要求で提示した（秘密鍵を持っている）、信頼する CA の証明書だけ.
    * 公開の情報である PEM だけで他人の証明書を自分に登録し、本人をこちらのアカウントへログインさせることを防ぐ.
    */
-  private def addOwnCert(
-    req: Request[IO],
-    userId: UUID,
-    pem: String
-  ): Res[UserCertDto] =
+  private def addOwnCert(req: Request[IO], userId: UUID, pem: String): Res[UserCertDto] =
     (auth.presentedChain(req), factors.authorities, Time.now).flatMapN {
-      (
-        chain,
-        cas,
-        now
-      ) =>
+      (chain, cas, now) =>
         val anchors = cas.filter(_.enabled).flatMap(a => Jose.parseCerts(a.pem).toOption.toList.flatten)
         chain.toRight("登録する証明書をブラウザで選んで（提示して）から、もう一度お試しください")
           .flatMap(ClientCerts.validate(_, anchors, now))
@@ -646,8 +503,5 @@ final class MeRoutes(
 
 /** メールの確認のトークンを、そのときのメールアドレスに結び付けたハッシュ. */
 object EmailBinding {
-  def hash(
-    token: String,
-    email: String
-  ): Array[Byte] = Crypto.sha256(token + "\n" + email.trim.toLowerCase)
+  def hash(token: String, email: String): Array[Byte] = Crypto.sha256(token + "\n" + email.trim.toLowerCase)
 }

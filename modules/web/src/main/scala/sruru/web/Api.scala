@@ -11,9 +11,7 @@ import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.scalajs.js
 
 /** API の呼び出しのエラー. */
-final case class ApiError(
-  status: Int,
-  message: String) extends Exception(message)
+final case class ApiError(status: Int, message: String) extends Exception(message)
 
 /**
  * バックエンドの REST API.
@@ -34,11 +32,7 @@ object Api {
       contentType: String)
   }
 
-  private def request(
-    method: dom.HttpMethod,
-    url: String,
-    body: Option[Body] = None
-  ): Future[Option[Json]] = {
+  private def request(method: dom.HttpMethod, url: String, body: Option[Body] = None): Future[Option[Json]] = {
     val init = new dom.RequestInit {}
     init.method = method
     init.credentials = dom.RequestCredentials.`same-origin`
@@ -74,67 +68,38 @@ object Api {
     }
   }
 
-  private def as[A: Decoder](
-    j: Option[Json]
-  ): A = j.getOrElse(Json.Null).as[A].fold(e => throw ApiError(0, "応答を読めません: " + e.getMessage), identity)
+  private def as[A: Decoder](j: Option[Json]): A =
+    j.getOrElse(Json.Null).as[A].fold(e => throw ApiError(0, "応答を読めません: " + e.getMessage), identity)
 
-  def get[A: Decoder](
-    url: String
-  ): Future[A] = request(dom.HttpMethod.GET, url).map(as[A])
-  def post[A: Decoder](
-    url: String,
-    body: Json = Json.obj()
-  ): Future[A] = request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(as[A])
-  def put[A: Decoder](
-    url: String,
-    body: Json
-  ): Future[A] = request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(as[A])
-  def delete(
-    url: String
-  ): Future[Unit] = request(dom.HttpMethod.DELETE, url).map(_ => ())
-  def deleteJson(
-    url: String,
-    body: Json
-  ): Future[Unit] = request(dom.HttpMethod.DELETE, url, Some(Body.JsonBody(body))).map(_ => ())
-  def postUnit(
-    url: String,
-    body: Json = Json.obj()
-  ): Future[Unit] = request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(_ => ())
-  def putUnit(
-    url: String,
-    body: Json
-  ): Future[Unit] = request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(_ => ())
+  def get[A: Decoder](url: String): Future[A] = request(dom.HttpMethod.GET, url).map(as[A])
+  def post[A: Decoder](url: String, body: Json = Json.obj()): Future[A] =
+    request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(as[A])
+  def put[A: Decoder](url: String, body: Json): Future[A] =
+    request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(as[A])
+  def delete(url: String): Future[Unit] = request(dom.HttpMethod.DELETE, url).map(_ => ())
+  def deleteJson(url: String, body: Json): Future[Unit] =
+    request(dom.HttpMethod.DELETE, url, Some(Body.JsonBody(body))).map(_ => ())
+  def postUnit(url: String, body: Json = Json.obj()): Future[Unit] =
+    request(dom.HttpMethod.POST, url, Some(Body.JsonBody(body))).map(_ => ())
+  def putUnit(url: String, body: Json): Future[Unit] =
+    request(dom.HttpMethod.PUT, url, Some(Body.JsonBody(body))).map(_ => ())
 
   /** そのままのデータ（画像・XML）を本文にして POST する. */
-  def postRaw[A: Decoder](
-    url: String,
-    data: js.Any,
-    contentType: String
-  ): Future[A] =
+  def postRaw[A: Decoder](url: String, data: js.Any, contentType: String): Future[A] =
     request(dom.HttpMethod.POST, url, Some(Body.Raw(data, contentType))).map(as[A])
 
-  def postRawUnit(
-    url: String,
-    data: js.Any,
-    contentType: String
-  ): Future[Unit] =
+  def postRawUnit(url: String, data: js.Any, contentType: String): Future[Unit] =
     request(dom.HttpMethod.POST, url, Some(Body.Raw(data, contentType))).map(_ => ())
 
-  def enc(
-    s: String
-  ): String = js.URIUtils.encodeURIComponent(s)
+  def enc(s: String): String = js.URIUtils.encodeURIComponent(s)
 
-  def query(
-    params: (String, Option[String])*
-  ): String = {
+  def query(params: (String, Option[String])*): String = {
     val q = params.collect { case (k, Some(v)) if v.nonEmpty => s"$k=${enc(v)}" }
     if (q.isEmpty) "" else q.mkString("?", "&", "")
   }
 
   /** URL の検索パラメータ. */
-  def param(
-    name: String
-  ): Option[String] =
+  def param(name: String): Option[String] =
     Option(new dom.URL(dom.window.location.href).searchParams.get(name)).filter(_.nonEmpty)
 
   // ---------------------------------------------------------------- よく使うもの
@@ -146,15 +111,10 @@ object Api {
   def groups(): Future[List[GroupDto]] = get[List[GroupDto]]("/api/admin/groups")
   def attributeDefs(): Future[List[AttributeDefDto]] = get[List[AttributeDefDto]]("/api/admin/attributes")
 
-  def searchUsers(
-    q: String,
-    limit: Int = 20
-  ): Future[List[UserDto]] =
+  def searchUsers(q: String, limit: Int = 20): Future[List[UserDto]] =
     get[UserListDto]("/api/admin/users" + query("q" -> Some(q), "limit" -> Some(limit.toString))).map(_.users)
 
   /** JSON にする（null の項目を省く）. */
-  def json[A: Encoder](
-    a: A
-  ): Json = a.asJson.dropNullValues
+  def json[A: Encoder](a: A): Json = a.asJson.dropNullValues
 
 }

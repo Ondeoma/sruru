@@ -18,20 +18,11 @@ object AuditMetrics {
   private val MfaMethods = Set("totp", "email", "recovery")
 
   /** 2つ目の要素の種類（メトリクス・スパンの属性. 送られてきた値なので決まったもの以外は other）. */
-  def mfaMethod(
-    m: String
-  ): String = if MfaMethods(m) then m else "other"
+  def mfaMethod(m: String): String = if MfaMethods(m) then m else "other"
 
-  private def res(
-    ok: Boolean
-  ) = if ok then "success" else "failure"
+  private def res(ok: Boolean) = if ok then "success" else "failure"
 
-  def record(
-    action: String,
-    via: String,
-    success: Boolean,
-    detail: Json
-  ): IO[Unit] = {
+  def record(action: String, via: String, success: Boolean, detail: Json): IO[Unit] = {
     val specific: IO[Unit] = action match {
       case "login.success" =>
         val amr = detail.hcursor.get[List[String]]("amr").getOrElse(Nil)
@@ -61,9 +52,7 @@ object AuditMetrics {
   }
 
   /** 本人にプッシュで知らせる出来事（題名・本文）. */
-  def alert(
-    action: String
-  ): Option[(String, String)] = action match {
+  def alert(action: String): Option[(String, String)] = action match {
     case "user.password.change" => Some(("パスワードが変更されました", "心当たりがなければ、すぐに管理者に連絡してください"))
     case "user.password.set" => Some(("管理者がパスワードを設定しました", "次のログインから新しいパスワードを使ってください"))
     case "user.password.reset" => Some(("パスワードを再設定しました", "心当たりがなければ、すぐに管理者に連絡してください"))

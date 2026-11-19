@@ -45,9 +45,7 @@ final case class SessionOverride(
   maxAccounts: Option[Int] = None) derives ConfiguredCodec
 
 /** IP アドレスの制限の上書き. allow はこれにも含まれること（全体の allow と両方）、deny は全体に加える. */
-final case class IpOverride(
-  allow: List[String] = Nil,
-  deny: List[String] = Nil) derives ConfiguredCodec
+final case class IpOverride(allow: List[String] = Nil, deny: List[String] = Nil) derives ConfiguredCodec
 
 /** 表示の上書き（優先度の最も高いグループのものを使う）. */
 final case class BrandingOverride(
@@ -56,13 +54,12 @@ final case class BrandingOverride(
   logo: Option[String] = None) derives ConfiguredCodec
 
 /** グループのポリシーの上書き一式. */
-final case class GroupPolicy(
-  password: PasswordOverride = PasswordOverride(),
-  lockout: LockoutOverride = LockoutOverride(),
-  mfa: MfaOverride = MfaOverride(),
-  session: SessionOverride = SessionOverride(),
-  ip: IpOverride = IpOverride(),
-  branding: BrandingOverride = BrandingOverride()) derives ConfiguredCodec {
+final case class GroupPolicy(password: PasswordOverride = PasswordOverride(),
+                             lockout: LockoutOverride = LockoutOverride(),
+                             mfa: MfaOverride = MfaOverride(),
+                             session: SessionOverride = SessionOverride(),
+                             ip: IpOverride = IpOverride(),
+                             branding: BrandingOverride = BrandingOverride()) derives ConfiguredCodec {
   def isEmpty: Boolean = this == GroupPolicy()
 }
 
@@ -71,40 +68,19 @@ object GroupPolicy {
   private val MfaRank = Map("off" -> 0, "optional" -> 1, "required" -> 2)
 
   // 「より厳しい方」
-  private def larger(
-    a: Int,
-    b: Option[Int]
-  ): Int = b.fold(a)(math.max(a, _))
-  private def smaller(
-    a: Int,
-    b: Option[Int]
-  ): Int = b.fold(a)(math.min(a, _))
-  private def or(
-    a: Boolean,
-    b: Option[Boolean]
-  ): Boolean = a || b.contains(true)
-  private def and(
-    a: Boolean,
-    b: Option[Boolean]
-  ): Boolean = a && !b.contains(false)
+  private def larger(a: Int, b: Option[Int]): Int = b.fold(a)(math.max(a, _))
+  private def smaller(a: Int, b: Option[Int]): Int = b.fold(a)(math.min(a, _))
+  private def or(a: Boolean, b: Option[Boolean]): Boolean = a || b.contains(true)
+  private def and(a: Boolean, b: Option[Boolean]): Boolean = a && !b.contains(false)
 
   /** 0 を「制限なし」とする値（有効期限・無操作の時間）: 0 でない小さい方. */
-  private def limit(
-    a: Int,
-    b: Option[Int]
-  ): Int = b.filter(_ > 0).fold(a)(x => if a <= 0 then x else math.min(a, x))
+  private def limit(a: Int, b: Option[Int]): Int = b.filter(_ > 0).fold(a)(x => if a <= 0 then x else math.min(a, x))
 
   /** ロックの時間: 0（管理者が解除するまで）が最も厳しく、ほかは長い方. */
-  private def lockTime(
-    a: Int,
-    b: Option[Int]
-  ): Int = b.fold(a)(x => if a == 0 || x == 0 then 0 else math.max(a, x))
+  private def lockTime(a: Int, b: Option[Int]): Int = b.fold(a)(x => if a == 0 || x == 0 then 0 else math.max(a, x))
 
   /** 1つのグループの上書きを重ねる（厳しい方へ. 表示の項目はここでは扱わない）. */
-  private def stricter(
-    p: PoliciesDto,
-    g: GroupPolicy
-  ): PoliciesDto = {
+  private def stricter(p: PoliciesDto, g: GroupPolicy): PoliciesDto = {
     val pw = g.password
     val lo = g.lockout
     val mf = g.mfa
@@ -149,22 +125,12 @@ object GroupPolicy {
    * ユーザーに効くポリシー. groups は所属するグループの (優先度, 名前, 上書き)（親グループを含む）.
    * セキュリティの項目は全体とすべてのグループの厳しい方. 表示の項目は、優先度の高い（同じなら名前の順で先の）グループのもの.
    */
-  def effective(
-    global: PoliciesDto,
-    groups: List[(Int, String, GroupPolicy)]
-  ): PoliciesDto = {
-    val merged = groups.foldLeft(global)(
-      (
-        p,
-        g
-      ) => stricter(p, g._3)
-    )
+  def effective(global: PoliciesDto, groups: List[(Int, String, GroupPolicy)]): PoliciesDto = {
+    val merged = groups.foldLeft(global)((p, g) => stricter(p, g._3))
     // どちらの方法も使えなくなったら、認証アプリは残す（2つ目の要素を求めるのに登録できる方法がなくならないように）
     val mfa = if !merged.mfa.allowTotp && !merged.mfa.allowEmail then merged.mfa.copy(allowTotp = true) else merged.mfa
     val ordered = groups.sortBy(g => (-g._1, g._2)).map(_._3.branding)
-    def pick[A](
-      f: BrandingOverride => Option[A]
-    ): Option[A] = ordered.flatMap(f).headOption
+    def pick[A](f: BrandingOverride => Option[A]): Option[A] = ordered.flatMap(f).headOption
     merged.copy(
       mfa = mfa,
       branding = merged.branding.copy(
@@ -175,9 +141,7 @@ object GroupPolicy {
   }
 
   /** 上書きの値を確かめる. */
-  def validate(
-    g: GroupPolicy
-  ): Either[String, GroupPolicy] = {
+  def validate(g: GroupPolicy): Either[String, GroupPolicy] = {
     val nums = List(
       g.password.minLength.filter(_ < 4).map(_ => "パスワードの最小の長さは4以上にしてください"),
       g.password.minClasses.filter(x => x < 1 || x > 4).map(_ => "文字の種類の数は1〜4にしてください"),

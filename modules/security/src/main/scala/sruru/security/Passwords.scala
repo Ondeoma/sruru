@@ -17,14 +17,7 @@ object Passwords {
   val Iterations = 2
   val Parallelism = 1
 
-  private def derive(
-    pw: String,
-    salt: Array[Byte],
-    m: Int,
-    t: Int,
-    p: Int,
-    len: Int
-  ): Array[Byte] = {
+  private def derive(pw: String, salt: Array[Byte], m: Int, t: Int, p: Int, len: Int): Array[Byte] = {
     val params = new Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
       .withVersion(
         Argon2Parameters.ARGON2_VERSION_13
@@ -36,9 +29,7 @@ object Passwords {
     out
   }
 
-  def hash(
-    pw: String
-  ): String = {
+  def hash(pw: String): String = {
     val salt = Crypto.randomBytes(16)
     val h = derive(pw, salt, Memory, Iterations, Parallelism, 32)
     List(
@@ -51,10 +42,7 @@ object Passwords {
     ).mkString(D)
   }
 
-  def verify(
-    pw: String,
-    stored: String
-  ): Boolean =
+  def verify(pw: String, stored: String): Boolean =
     stored.split('$').toList match {
       case "" :: "argon2id" :: "v=19" :: params :: salt :: h :: Nil =>
         val kv = params.split(',').flatMap(_.split('=') match {

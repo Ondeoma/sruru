@@ -21,19 +21,14 @@ import org.http4s.headers.{`WWW-Authenticate`, Allow, Authorization}
  * MCP（Model Context Protocol）のサーバー. POST /mcp に JSON-RPC を送る（Streamable HTTP. 応答は JSON）.
  * 認証は API トークン（Bearer）だけ. 各ツールは REST API をそのトークンで内部から呼ぶので、権限・スコープ・監査ログは REST API と同じ.
  */
-final class McpRoutes(
-  api: HttpRoutes[IO],
-  auth: SessionAuth,
-  cfg: ApiConfig) extends Http4sDsl[IO] {
+final class McpRoutes(api: HttpRoutes[IO], auth: SessionAuth, cfg: ApiConfig) extends Http4sDsl[IO] {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ POST -> Root / "mcp" => postMcp(req)
     case (GET | DELETE) -> Root / "mcp" => getMcp()
   }
 
-  private def postMcp(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postMcp(req: Request[IO]): IO[Response[IO]] =
     req.headers.get[Authorization] match {
       case Some(authz @ Authorization(Credentials.Token(AuthScheme.Bearer, _))) =>
         auth.principal(inner(req, authz, Method.GET, Uri.unsafeFromString("/mcp"))).flatMap {
@@ -62,12 +57,7 @@ final class McpRoutes(
   // ------------------------------------------------------------------ REST API の内部呼び出し
 
   /** 内部の要求（外側の要求の接続元・X-Forwarded-For・User-Agent を引き継ぎ、IP 制限と監査ログを正しくする）. */
-  private def inner(
-    outer: Request[IO],
-    authz: Authorization,
-    method: Method,
-    uri: Uri
-  ): Request[IO] = {
+  private def inner(outer: Request[IO], authz: Authorization, method: Method, uri: Uri): Request[IO] = {
     val fwd =
       outer.headers.headers.filter(h => h.name == CIString("X-Forwarded-For") || h.name == CIString("User-Agent"))
     Request[IO](
@@ -77,14 +67,8 @@ final class McpRoutes(
     ).putHeaders(authz).transformHeaders(_ ++ Headers(fwd))
   }
 
-  private final class Caller(
-    outer: Request[IO],
-    authz: Authorization) {
-    def apply(
-      method: Method,
-      uri: Uri,
-      body: Option[Json] = None
-    ): IO[Either[String, Json]] = {
+  private final class Caller(outer: Request[IO], authz: Authorization) {
+    def apply(method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, Json]] = {
       val req0 = inner(outer, authz, method, uri)
       val req = body.fold(req0)(req0.withEntity(_))
       api.run(req).value.flatMap {
@@ -99,22 +83,18 @@ final class McpRoutes(
     }
   }
 
-  private def path(
-    segments: String*
-  ): Uri = Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
+  private def path(segments: String*): Uri =
+    Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
 
   // ------------------------------------------------------------------ ツール
 
   private type Result = IO[Either[String, String]]
 
-  private final case class Tool(
-    name: String,
-    description: String,
-    schema: Json,
-    readOnly: Boolean,
-    destructive: Boolean = false
-  )(
-    val run: (Caller, ACursor) => Result) {
+  private final case class Tool(name: String,
+                                description: String,
+                                schema: Json,
+                                readOnly: Boolean,
+                                destructive: Boolean = false)(val run: (Caller, ACursor) => Result) {
     def json: Json = Json.obj(
       "name" -> name.asJson,
       "description" -> description.asJson,
@@ -127,55 +107,28 @@ final class McpRoutes(
     )
   }
 
-  private def schema(
-    required: List[String],
-    props: (String, Json)*
-  ): Json =
+  private def schema(required: List[String], props: (String, Json)*): Json =
     Json.obj("type" -> "object".asJson, "properties" -> Json.obj(props*), "required" -> required.asJson)
-  private def str(
-    d: String
-  ): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
-  private def int(
-    d: String
-  ): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
-  private def bool(
-    d: String
-  ): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
-  private def strs(
-    d: String
-  ): Json =
+  private def str(d: String): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
+  private def int(d: String): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
+  private def bool(d: String): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
+  private def strs(d: String): Json =
     Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson), "description" -> d.asJson)
-  private def obj(
-    d: String
-  ): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
+  private def obj(d: String): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
 
-  private def need(
-    a: ACursor,
-    k: String
-  ): Either[String, String] = a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty).toRight(s"$k を指定してください")
-  private def opt(
-    a: ACursor,
-    k: String
-  ): Option[String] = a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty)
+  private def need(a: ACursor, k: String): Either[String, String] =
+    a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty).toRight(s"$k を指定してください")
+  private def opt(a: ACursor, k: String): Option[String] = a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty)
 
-  extension [A](
-    e: Either[String, A]
-  ) {
-    private def withArgs(
-      f: A => Result
-    ): Result = e.fold(err => IO.pure(Left(err)), f)
+  extension [A](e: Either[String, A]) {
+    private def withArgs(f: A => Result): Result = e.fold(err => IO.pure(Left(err)), f)
   }
-  extension (
-    r: IO[Either[String, Json]]
-  ) {
+  extension (r: IO[Either[String, Json]]) {
     private def asText: Result = r.map(_.map(_.spaces2))
   }
 
   /** ユーザー名・メールアドレス・ID からユーザーの ID を引く. */
-  private def userId(
-    call: Caller,
-    who: String
-  ): IO[Either[String, String]] =
+  private def userId(call: Caller, who: String): IO[Either[String, String]] =
     if scala.util.Try(java.util.UUID.fromString(who)).isSuccess then IO.pure(Right(who))
     else
       call(
@@ -190,10 +143,7 @@ final class McpRoutes(
           .flatMap(_.hcursor.get[String]("id").toOption).toRight(s"ユーザー「$who」が見つかりません")
       })
 
-  private def groupId(
-    call: Caller,
-    name: String
-  ): IO[Either[String, String]] =
+  private def groupId(call: Caller, name: String): IO[Either[String, String]] =
     if scala.util.Try(java.util.UUID.fromString(name)).isSuccess then IO.pure(Right(name))
     else
       call(Method.GET, path("api", "admin", "groups")).map(_.flatMap(_.asArray.toList.flatten
@@ -203,12 +153,7 @@ final class McpRoutes(
         .toRight(s"グループ「$name」が見つかりません")))
 
   /** ユーザーを読み、変更を重ねて PUT する. */
-  private def patchUser(
-    call: Caller,
-    who: String
-  )(
-    f: Json => Json
-  ): IO[Either[String, Json]] =
+  private def patchUser(call: Caller, who: String)(f: Json => Json): IO[Either[String, Json]] =
     userId(call, who).flatMap(_.fold(
       e => IO.pure(Left(e)),
       id =>
@@ -239,10 +184,7 @@ final class McpRoutes(
 
   private val tools: List[Tool] = List(
     Tool("get_me", "このトークンの持ち主の情報（名前・所属グループ・多要素認証の状態）。", schema(Nil), readOnly = true) {
-      (
-        call,
-        _
-      ) =>
+      (call, _) =>
         call(Method.GET, path("api", "me")).asText
     },
     Tool(
@@ -251,18 +193,10 @@ final class McpRoutes(
       schema(Nil, "q" -> str("検索語"), "status" -> str("状態"), "group" -> str("グループ名で絞る"), "limit" -> int("件数（既定 50）")),
       readOnly = true
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         {
           val base = path("api", "admin", "users").withQueryParam("limit", a.get[Int]("limit").getOrElse(50).toString)
-          val withQ = List("q", "status").foldLeft(base)(
-            (
-              u,
-              k
-            ) => opt(a, k).fold(u)(v => u.withQueryParam(k, v))
-          )
+          val withQ = List("q", "status").foldLeft(base)((u, k) => opt(a, k).fold(u)(v => u.withQueryParam(k, v)))
           opt(a, "group").fold(call(Method.GET, withQ))(g =>
             groupId(call, g).flatMap(_.fold(
               e => IO.pure(Left(e)),
@@ -277,10 +211,7 @@ final class McpRoutes(
       schema(List("user"), "user" -> str("ユーザー名・メールアドレス・ID")),
       readOnly = true
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "user").withArgs(u =>
           userId(
             call,
@@ -304,15 +235,9 @@ final class McpRoutes(
       ),
       readOnly = false
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         (need(a, "username"), need(a, "name")).tupled.withArgs {
-          (
-            un,
-            nm
-          ) =>
+          (un, nm) =>
             a.get[List[String]]("groups").getOrElse(Nil).traverse(groupId(call, _)).flatMap(_.sequence match {
               case Left(e) => IO.pure(Left(e))
               case Right(gids) =>
@@ -350,10 +275,7 @@ final class McpRoutes(
       ),
       readOnly = false
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "user").withArgs(who =>
           patchUser(call, who) { cur =>
             val simple = List("name", "email", "givenName", "familyName", "phoneNumber").flatMap(k =>
@@ -375,10 +297,7 @@ final class McpRoutes(
       readOnly = false,
       destructive = true
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "user").withArgs(who =>
           patchUser(call, who)(_.deepMerge(Json.obj("disabled" ->
             a.get[Boolean]("disabled").getOrElse(true).asJson))).asText
@@ -390,10 +309,7 @@ final class McpRoutes(
       schema(List("user"), "user" -> str("ユーザー名・メール・ID")),
       readOnly = false
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "user").withArgs(who =>
           userId(call, who).flatMap(_.fold(
             e => IO.pure(Left(e)),
@@ -408,10 +324,7 @@ final class McpRoutes(
       readOnly = false,
       destructive = true
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "user").withArgs(who =>
           userId(call, who).flatMap(_.fold(
             e => IO.pure(Left(e)),
@@ -428,17 +341,11 @@ final class McpRoutes(
         )
     },
     Tool("list_groups", "グループの一覧（親子・メンバー数・動的なルール）。", schema(Nil), readOnly = true) {
-      (
-        call,
-        _
-      ) =>
+      (call, _) =>
         call(Method.GET, path("api", "admin", "groups")).asText
     },
     Tool("get_group_members", "グループのメンバー（手動・動的）。", schema(List("group"), "group" -> str("グループ名・ID")), readOnly = true) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         need(a, "group").withArgs(g =>
           groupId(call, g).flatMap(_.fold(
             e => IO.pure(Left(e)),
@@ -452,29 +359,18 @@ final class McpRoutes(
       schema(List("group", "user"), "group" -> str("グループ名・ID"), "user" -> str("ユーザー名・メール・ID")),
       readOnly = false
     ) {
-      (
-        call,
-        a
-      ) =>
-        (need(a, "group"), need(a, "user")).tupled.withArgs(
-          (
-            g,
-            u
-          ) =>
-            (groupId(call, g), userId(call, u)).flatMapN(
-              (
-                ge,
-                ue
-              ) =>
-                (ge, ue).tupled match {
-                  case Left(e) => IO.pure(Left(e))
-                  case Right((gid, uid)) => call(
-                      Method.POST,
-                      path("api", "admin", "groups", gid, "members"),
-                      Some(Json.obj("userIds" -> List(uid).asJson))
-                    )
-                }
-            ).asText
+      (call, a) =>
+        (need(a, "group"), need(a, "user")).tupled.withArgs((g, u) =>
+          (groupId(call, g), userId(call, u)).flatMapN((ge, ue) =>
+            (ge, ue).tupled match {
+              case Left(e) => IO.pure(Left(e))
+              case Right((gid, uid)) => call(
+                  Method.POST,
+                  path("api", "admin", "groups", gid, "members"),
+                  Some(Json.obj("userIds" -> List(uid).asJson))
+                )
+            }
+          ).asText
         )
     },
     Tool(
@@ -484,33 +380,19 @@ final class McpRoutes(
       readOnly = false,
       destructive = true
     ) {
-      (
-        call,
-        a
-      ) =>
-        (need(a, "group"), need(a, "user")).tupled.withArgs(
-          (
-            g,
-            u
-          ) =>
-            (groupId(call, g), userId(call, u)).flatMapN(
-              (
-                ge,
-                ue
-              ) =>
-                (ge, ue).tupled match {
-                  case Left(e) => IO.pure(Left(e))
-                  case Right((gid, uid)) =>
-                    call(Method.DELETE, path("api", "admin", "groups", gid, "members", uid))
-                }
-            ).asText
+      (call, a) =>
+        (need(a, "group"), need(a, "user")).tupled.withArgs((g, u) =>
+          (groupId(call, g), userId(call, u)).flatMapN((ge, ue) =>
+            (ge, ue).tupled match {
+              case Left(e) => IO.pure(Left(e))
+              case Right((gid, uid)) =>
+                call(Method.DELETE, path("api", "admin", "groups", gid, "members", uid))
+            }
+          ).asText
         )
     },
     Tool("list_applications", "連携しているアプリケーション（OIDC・SAML）の一覧。", schema(Nil), readOnly = true) {
-      (
-        call,
-        _
-      ) =>
+      (call, _) =>
         call(Method.GET, path("api", "admin", "apps")).asText
     },
     Tool(
@@ -527,18 +409,12 @@ final class McpRoutes(
       ),
       readOnly = true
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         val base = path("api", "admin", "audit").withQueryParam("limit", a.get[Int]("limit").getOrElse(50).toString)
         call(
           Method.GET,
-          List("q", "action", "success", "from", "to").foldLeft(base)(
-            (
-              u,
-              k
-            ) => opt(a, k).fold(u)(v => u.withQueryParam(k, v))
+          List("q", "action", "success", "from", "to").foldLeft(base)((u, k) =>
+            opt(a, k).fold(u)(v => u.withQueryParam(k, v))
           )
         ).asText
     },
@@ -548,10 +424,7 @@ final class McpRoutes(
       schema(Nil),
       readOnly = true
     ) {
-      (
-        _,
-        _
-      ) =>
+      (_, _) =>
         IO.pure(Right(ApiCatalog.all.map(e => s"${e.method} ${e.path} — ${e.description}").mkString("\n")))
     },
     Tool(
@@ -565,15 +438,9 @@ final class McpRoutes(
       ),
       readOnly = false
     ) {
-      (
-        call,
-        a
-      ) =>
+      (call, a) =>
         (need(a, "method").map(_.toUpperCase), need(a, "path")).tupled.withArgs {
-          (
-            m,
-            p
-          ) =>
+          (m, p) =>
             (
               Method.fromString(m).toOption.filter(x => Set("GET", "POST", "PUT", "PATCH", "DELETE")(x.name)),
               Uri.fromString(p).toOption.filter { u =>
@@ -595,29 +462,16 @@ final class McpRoutes(
 
   // ------------------------------------------------------------------ JSON-RPC
 
-  private def ok(
-    id: Json,
-    result: Json
-  ): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
-  private def rpcFail(
-    id: Json,
-    code: Int,
-    msg: String
-  ): Json =
+  private def ok(id: Json, result: Json): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
+  private def rpcFail(id: Json, code: Int, msg: String): Json =
     Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "error" -> Json.obj("code" -> code.asJson, "message" -> msg.asJson))
-  private def toolResult(
-    r: Either[String, String]
-  ): Json =
+  private def toolResult(r: Either[String, String]): Json =
     Json.obj(
       "content" -> Json.arr(Json.obj("type" -> "text".asJson, "text" -> r.merge.asJson)),
       "isError" -> r.isLeft.asJson
     )
 
-  private def handle(
-    call: Caller,
-    p: Principal,
-    msg: Json
-  ): IO[Option[Json]] = {
+  private def handle(call: Caller, p: Principal, msg: Json): IO[Option[Json]] = {
     val c = msg.hcursor
     val params = c.downField("params")
     c.downField("id").focus match {

@@ -14,10 +14,7 @@ object Ids {
 // ------------------------------------------------------------------ カスタム属性の入力
 
 /** カスタム属性の入力欄 1つ（文字は str、真偽値は bool）. */
-final case class AttrField(
-  d: AttributeDefDto,
-  str: RV[String],
-  bool: RV[Boolean]) {
+final case class AttrField(d: AttributeDefDto, str: RV[String], bool: RV[Boolean]) {
   def inputType: String = d.kind match {
     case "number" => "number"
     case "date" => "date"
@@ -28,9 +25,7 @@ final case class AttrField(
 object Attrs {
 
   /** 属性の値を入力欄の文字にする（リストは1行に1つ）. */
-  private def show(
-    j: Json
-  ): String = j.fold(
+  private def show(j: Json): String = j.fold(
     "",
     _.toString,
     n => n.toString,
@@ -39,26 +34,17 @@ object Attrs {
     o => Json.fromJsonObject(o).noSpaces
   )
 
-  def fields(
-    defs: List[AttributeDefDto],
-    attrs: Json
-  ): List[AttrField] =
+  def fields(defs: List[AttributeDefDto], attrs: Json): List[AttrField] =
     defs.sortBy(d => (d.sort, d.key)).map { d =>
       val v = attrs.hcursor.downField(d.key).focus
       AttrField(d, RV(v.map(show).getOrElse("")), RV(v.flatMap(_.asBoolean).getOrElse(false)))
     }
 
   /** 入力欄の値を属性の JSON に戻す（定義のない属性はそのまま残す. 空欄は消す）. */
-  def build(
-    base: Json,
-    fs: List[AttrField]
-  ): Json = {
+  def build(base: Json, fs: List[AttrField]): Json = {
     val obj = base.asObject.getOrElse(io.circe.JsonObject.empty)
     val out = fs.foldLeft(obj) {
-      (
-        o,
-        f
-      ) =>
+      (o, f) =>
         val s = f.str.v.trim
         val v: Option[Json] = f.d.kind match {
           case "boolean" => Some(Json.fromBoolean(f.bool.v))
@@ -77,11 +63,7 @@ object Attrs {
 // ------------------------------------------------------------------ 動的なグループの条件
 
 /** 条件 1行（value はカンマ区切りで複数にできる: in のとき）. */
-final case class CondRow(
-  id: Int,
-  path: RV[String],
-  op: RV[String],
-  value: RV[String]) {
+final case class CondRow(id: Int, path: RV[String], op: RV[String], value: RV[String]) {
   def needsValue = op.mapC(o => o != "exists" && o != "not_exists")
 }
 
@@ -114,16 +96,11 @@ object Rules {
     "user.attributes."
   )
 
-  def row(
-    path: String = "user.email",
-    op: String = "eq",
-    value: String = ""
-  ): CondRow = CondRow(Ids.next(), RV(path), RV(op), RV(value))
+  def row(path: String = "user.email", op: String = "eq", value: String = ""): CondRow =
+    CondRow(Ids.next(), RV(path), RV(op), RV(value))
 
   /** {match, conditions: [{path, op, value, values}]} を読む. */
-  def parse(
-    rule: Option[Json]
-  ): (String, List[CondRow]) = rule match {
+  def parse(rule: Option[Json]): (String, List[CondRow]) = rule match {
     case None => ("all", Nil)
     case Some(j) =>
       val c = j.hcursor
@@ -137,10 +114,7 @@ object Rules {
       (m, rows)
   }
 
-  def build(
-    mode: String,
-    rows: List[CondRow]
-  ): Option[Json] =
+  def build(mode: String, rows: List[CondRow]): Option[Json] =
     if (rows.isEmpty) None
     else Some(Json.obj(
       "match" -> mode.asJson,
@@ -158,21 +132,18 @@ object Rules {
 
 // ------------------------------------------------------------------ 属性の対応付け（クレーム・SAML 属性）
 
-final case class MappingRow(
-  id: Int,
-  name: RV[String],
-  expression: RV[String],
-  scope: RV[String],
-  friendlyName: RV[String],
-  multi: RV[Boolean]) {
+final case class MappingRow(id: Int,
+                            name: RV[String],
+                            expression: RV[String],
+                            scope: RV[String],
+                            friendlyName: RV[String],
+                            multi: RV[Boolean]) {
   def toDto: MappingDto = MappingDto(name.v.trim, expression.v, Fmt.opt(scope.v), Fmt.opt(friendlyName.v), multi.v)
 }
 
 object Mappings {
 
-  def row(
-    m: MappingDto
-  ): MappingRow =
+  def row(m: MappingDto): MappingRow =
     MappingRow(
       Ids.next(),
       RV(m.name),
@@ -212,25 +183,17 @@ object GroupTree {
   import java.util.UUID
 
   /** 親（複数）のうち、名前の順で最初のもの（選択肢などで1か所に置くときの親）. */
-  private def mainParent(
-    g: GroupDto,
-    m: Map[UUID, GroupDto]
-  ): Option[UUID] = g.parentIds.flatMap(m.get).sortBy(_.name).headOption.map(_.id)
+  private def mainParent(g: GroupDto, m: Map[UUID, GroupDto]): Option[UUID] =
+    g.parentIds.flatMap(m.get).sortBy(_.name).headOption.map(_.id)
 
   /**
    * 親子の順に並べる（深さ付き. 各グループは1回だけ、名前の順で最初の親の下に置く. 親が見つからないものは最上位）.
    * チェックボックスや選択肢など、同じグループを2回出したくないところで使う.
    */
-  def flatten(
-    gs: List[GroupDto]
-  ): List[(GroupDto, Int)] = {
+  def flatten(gs: List[GroupDto]): List[(GroupDto, Int)] = {
     val m = gs.map(x => x.id -> x).toMap
     val byParent = gs.groupBy(g => mainParent(g, m))
-    def walk(
-      p: Option[UUID],
-      d: Int,
-      seen: Set[UUID]
-    ): List[(GroupDto, Int)] =
+    def walk(p: Option[UUID], d: Int, seen: Set[UUID]): List[(GroupDto, Int)] =
       byParent.getOrElse(p, Nil).sortBy(_.name).filterNot(g => seen.contains(g.id)).flatMap(g =>
         (g, d) :: walk(Some(g.id), d + 1, seen + g.id)
       )
@@ -238,18 +201,10 @@ object GroupTree {
   }
 
   /** 木の表示（親が複数あるグループは、それぞれの親の下に出す）. (グループ, 深さ, 行のキー). */
-  def tree(
-    gs: List[GroupDto]
-  ): List[(GroupDto, Int, String)] = {
+  def tree(gs: List[GroupDto]): List[(GroupDto, Int, String)] = {
     val ids = gs.map(_.id).toSet
-    def parentsOf(
-      g: GroupDto
-    ): List[UUID] = g.parentIds.filter(ids.contains)
-    def walk(
-      p: Option[UUID],
-      d: Int,
-      path: List[UUID]
-    ): List[(GroupDto, Int, String)] =
+    def parentsOf(g: GroupDto): List[UUID] = g.parentIds.filter(ids.contains)
+    def walk(p: Option[UUID], d: Int, path: List[UUID]): List[(GroupDto, Int, String)] =
       gs.filter(g => p.fold(parentsOf(g).isEmpty)(parentsOf(g).contains)).sortBy(_.name).filterNot(g =>
         path.contains(g.id)
       )
@@ -258,28 +213,17 @@ object GroupTree {
   }
 
   /** 「親 / 子」の名前（親が複数なら名前の順で最初の親をたどる）. */
-  def path(
-    gs: List[GroupDto],
-    g: GroupDto
-  ): String = {
+  def path(gs: List[GroupDto], g: GroupDto): String = {
     val m = gs.map(x => x.id -> x).toMap
-    def up(
-      x: GroupDto,
-      n: Int
-    ): List[String] = mainParent(x, m).flatMap(m.get).filter(_ => n < 10).map(p => up(p, n + 1)).getOrElse(Nil) :+
-      x.name
+    def up(x: GroupDto, n: Int): List[String] =
+      mainParent(x, m).flatMap(m.get).filter(_ => n < 10).map(p => up(p, n + 1)).getOrElse(Nil) :+
+        x.name
     up(g, 0).mkString(" / ")
   }
 
   /** g の子孫（親にすると循環するもの）. */
-  def descendants(
-    gs: List[GroupDto],
-    id: UUID
-  ): Set[UUID] = {
-    def go(
-      todo: List[UUID],
-      seen: Set[UUID]
-    ): Set[UUID] = todo match {
+  def descendants(gs: List[GroupDto], id: UUID): Set[UUID] = {
+    def go(todo: List[UUID], seen: Set[UUID]): Set[UUID] = todo match {
       case Nil => seen
       case h :: t =>
         val kids = gs.filter(_.parentIds.contains(h)).map(_.id).filterNot(seen.contains)
@@ -288,54 +232,44 @@ object GroupTree {
     go(List(id), Set.empty)
   }
 
-  def indent(
-    d: Int
-  ): String = s"padding-left: ${0.55 + d * 1.2}rem"
+  def indent(d: Int): String = s"padding-left: ${0.55 + d * 1.2}rem"
 
 }
 
 // ------------------------------------------------------------------ グループのポリシーの上書き
 
 /** グループのポリシーの上書きの入力（数の欄は文字列. 空欄・チェックなしは上書きしない）. */
-final case class PolicyEdit(
-  minLength: RV[String],
-  minClasses: RV[String],
-  history: RV[String],
-  maxAge: RV[String],
-  upper: RV[Boolean],
-  lower: RV[Boolean],
-  digit: RV[Boolean],
-  symbol: RV[Boolean],
-  userInfo: RV[Boolean],
-  common: RV[Boolean],
-  lockEnabled: RV[Boolean],
-  maxFailures: RV[String],
-  lockMinutes: RV[String],
-  mfaMode: RV[String],
-  noTotp: RV[Boolean],
-  noEmail: RV[Boolean],
-  emailMinutes: RV[String],
-  lifetime: RV[String],
-  idle: RV[String],
-  maxAccounts: RV[String],
-  allow: RV[String],
-  deny: RV[String],
-  title: RV[String],
-  logo: RV[Option[String]]) {
+final case class PolicyEdit(minLength: RV[String],
+                            minClasses: RV[String],
+                            history: RV[String],
+                            maxAge: RV[String],
+                            upper: RV[Boolean],
+                            lower: RV[Boolean],
+                            digit: RV[Boolean],
+                            symbol: RV[Boolean],
+                            userInfo: RV[Boolean],
+                            common: RV[Boolean],
+                            lockEnabled: RV[Boolean],
+                            maxFailures: RV[String],
+                            lockMinutes: RV[String],
+                            mfaMode: RV[String],
+                            noTotp: RV[Boolean],
+                            noEmail: RV[Boolean],
+                            emailMinutes: RV[String],
+                            lifetime: RV[String],
+                            idle: RV[String],
+                            maxAccounts: RV[String],
+                            allow: RV[String],
+                            deny: RV[String],
+                            title: RV[String],
+                            logo: RV[Option[String]]) {
 
-  private def num(
-    label: String,
-    v: String
-  ): Either[String, Option[Int]] =
+  private def num(label: String, v: String): Either[String, Option[Int]] =
     if (v.trim.isEmpty) Right(None) else v.trim.toIntOption.map(Some(_)).toRight(s"「$label」は数で入力してください")
 
   def build: Either[String, GroupPolicy] = {
-    def must(
-      b: Boolean
-    ) = Option.when(b)(true)
-    def forbid(
-      b: Boolean
-    ) = Option.when(b)(false)
+    def must(b: Boolean) = Option.when(b)(true)
+    def forbid(b: Boolean) = Option.when(b)(false)
     for {
       minL <- num("最小の長さ", minLength.v)
       cls <- num("文字の種類の数", minClasses.v)
@@ -370,15 +304,9 @@ final case class PolicyEdit(
 }
 
 object PolicyEdit {
-  def from(
-    p: GroupPolicy
-  ): PolicyEdit = {
-    def n(
-      o: Option[Int]
-    ) = RV(o.map(_.toString).getOrElse(""))
-    def b(
-      o: Option[Boolean]
-    ) = RV(o.contains(true))
+  def from(p: GroupPolicy): PolicyEdit = {
+    def n(o: Option[Int]) = RV(o.map(_.toString).getOrElse(""))
+    def b(o: Option[Boolean]) = RV(o.contains(true))
     PolicyEdit(
       n(p.password.minLength),
       n(p.password.minClasses),

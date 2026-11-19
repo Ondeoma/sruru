@@ -8,11 +8,8 @@ class ScimJsonSpec extends munit.FunSuite {
     "emails":[{"value":"a@example.com","type":"work","primary":true}],
     "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":{"department":"営業"}}""").toOption.get
 
-  private def op(
-    o: String,
-    path: Option[String],
-    v: String
-  ) = ScimJson.applyOp(user, o, path, parse(v).toOption.get).fold(e => fail(e), identity)
+  private def op(o: String, path: Option[String], v: String) =
+    ScimJson.applyOp(user, o, path, parse(v).toOption.get).fold(e => fail(e), identity)
 
   test("パスなしの replace（Entra の name.givenName 形式のキー）") {
     val r = op("replace", None, """{"active":false,"name.givenName":"次郎"}""")

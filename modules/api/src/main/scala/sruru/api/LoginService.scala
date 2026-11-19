@@ -18,18 +18,17 @@ import java.util.UUID
  * ログインの流れ. 本人確認（パスワード・クライアント証明書・外部の IdP）→ 必要なら パスワードの変更・2つ目の要素・認証アプリの登録 → 完了.
  * 途中の状態は login_flows に保存する（ブラウザのセッションに結び付け、15分で切れる）.
  */
-final class LoginService(
-  dir: Directory,
-  sessions: SessionStore,
-  factors: FactorStore,
-  tokens: TokenStore,
-  apps: AppStore,
-  fedStore: FederationStore,
-  policies: PolicyService,
-  audit: AuditService,
-  mail: MailService,
-  box: SecretBox,
-  cfg: ApiConfig) {
+final class LoginService(dir: Directory,
+                         sessions: SessionStore,
+                         factors: FactorStore,
+                         tokens: TokenStore,
+                         apps: AppStore,
+                         fedStore: FederationStore,
+                         policies: PolicyService,
+                         audit: AuditService,
+                         mail: MailService,
+                         box: SecretBox,
+                         cfg: ApiConfig) {
 
   private val FlowTtl = 15L * 60
   private val EmailMaxTry = 5
@@ -47,9 +46,7 @@ final class LoginService(
     "offline_access" -> "ログアウト後も使い続ける（リフレッシュトークン）"
   )
 
-  def appBrief(
-    a: Application
-  ): AppBriefDto =
+  def appBrief(a: Application): AppBriefDto =
     AppBriefDto(
       a.id,
       a.slug,
@@ -60,9 +57,7 @@ final class LoginService(
       a.protocol
     )
 
-  def requestDto(
-    id: UUID
-  ): IO[Option[AuthRequestDto]] =
+  def requestDto(id: UUID): IO[Option[AuthRequestDto]] =
     Time.now.flatMap(now => tokens.request(id, now)).flatMap(_.flatTraverse { r =>
       apps.find(r.appId).map(_.map { a =>
         val c = r.params.hcursor
@@ -79,22 +74,14 @@ final class LoginService(
 
   // ------------------------------------------------------------------ 画面に返す状態
 
-  private def maskEmail(
-    e: String
-  ): String = {
+  private def maskEmail(e: String): String = {
     val (l, d) = e.span(_ != '@')
     (if l.length <= 2 then l.take(1) + "*" else l.take(2) + "*" * math.min(6, l.length - 2)) + d
   }
 
-  private def methods(
-    u: User,
-    p: PoliciesDto
-  ): IO[List[String]] =
+  private def methods(u: User, p: PoliciesDto): IO[List[String]] =
     (factors.totps(u.id), factors.recoveryRemaining(u.id)).mapN {
-      (
-        ts,
-        rec
-      ) =>
+      (ts, rec) =>
         List(
           Option.when(p.mfa.allowTotp && ts.exists(_.confirmed))("totp"),
           // 確認済みのアドレスだけ（未確認のアドレスへ2つ目の要素を送らない）
@@ -103,10 +90,7 @@ final class LoginService(
         ).flatten
     }
 
-  def dto(
-    f: LoginFlow,
-    extra: FlowDto => FlowDto = identity
-  ): IO[FlowDto] =
+  def dto(f: LoginFlow, extra: FlowDto => FlowDto = identity): IO[FlowDto] =
     for {
       u <- f.userId.flatTraverse(dir.users.find)
       p <- u.fold(policies.get)(dir.policyFor)
@@ -130,22 +114,13 @@ final class LoginService(
       req
     ))
 
-  private def withFlow[A](
-    bs: BrowserSession,
-    id: UUID
-  )(
-    f: LoginFlow => Res[A]
-  ): Res[A] =
+  private def withFlow[A](bs: BrowserSession, id: UUID)(f: LoginFlow => Res[A]): Res[A] =
     Time.now.flatMap(now => sessions.flow(id, bs.id, now)).flatMap {
       case None => Res.fail(AppError(ErrorCode.LoginExpired))
       case Some(x) => f(x)
     }
 
-  private def withUser[A](
-    f: LoginFlow
-  )(
-    g: User => Res[A]
-  ): Res[A] =
+  private def withUser[A](f: LoginFlow)(g: User => Res[A]): Res[A] =
     f.userId.flatTraverse(dir.users.find).flatMap {
       case Some(u) if !u.disabled => g(u)
       case _ => Res.fail(AppError(ErrorCode.LoginExpired))
@@ -154,20 +129,13 @@ final class LoginService(
   // ------------------------------------------------------------------ 開始
 
   /** 同じサイトの中のパスだけ（制御文字・空白・バックスラッシュを含むものは、ブラウザが //外部 と解釈しうるので拒否する）. */
-  private def safeReturn(
-    s: Option[String]
-  ): Option[String] =
+  private def safeReturn(s: Option[String]): Option[String] =
     s.filter(r =>
       r.startsWith("/") && !r.startsWith("//") && r.length <= 2000 &&
         r.forall(ch => ch > ' ' && ch != '\\' && ch != '\u007f')
     )
 
-  def start(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: LoginStartReq,
-    current: Option[(Login, User)]
-  ): Res[FlowDto] =
+  def start(c: ReqCtx, bs: BrowserSession, req: LoginStartReq, current: Option[(Login, User)]): Res[FlowDto] =
     for {
       now <- Time.now
       reqOk <- req.requestId.flatTraverse(id => tokens.request(id, now)).map(r => req.requestId.isEmpty || r.isDefined)
@@ -184,26 +152,15 @@ final class LoginService(
         }
     } yield res
 
-  def get(
-    bs: BrowserSession,
-    id: UUID
-  ): Res[FlowDto] = withFlow(bs, id)(f => dto(f).map(Right(_)))
+  def get(bs: BrowserSession, id: UUID): Res[FlowDto] = withFlow(bs, id)(f => dto(f).map(Right(_)))
 
   // ------------------------------------------------------------------ パスワード
 
-  private def windowStart(
-    p: PoliciesDto,
-    now: Instant
-  ) = now.minusSeconds(p.lockout.ipWindowMinutes.toLong * 60)
+  private def windowStart(p: PoliciesDto, now: Instant) = now.minusSeconds(p.lockout.ipWindowMinutes.toLong * 60)
 
-  private def throttled(
-    c: ReqCtx
-  ): IO[Boolean] =
+  private def throttled(c: ReqCtx): IO[Boolean] =
     (policies.get, Time.now).flatMapN {
-      (
-        p,
-        now
-      ) =>
+      (p, now) =>
         if p.lockout.ipMaxFailures <= 0 then IO.pure(false)
         else
           factors.throttleCount("ip:" + IpRules.throttleKey(c.ip), windowStart(p, now)).map(_ >=
@@ -211,13 +168,7 @@ final class LoginService(
     }
 
   /** 失敗を記録する（IP ごとの回数・ユーザーのロック・監査ログ）. */
-  private def failed(
-    c: ReqCtx,
-    u: Option[User],
-    action: String,
-    reason: String,
-    extra: Json = Json.obj()
-  ): IO[Unit] =
+  private def failed(c: ReqCtx, u: Option[User], action: String, reason: String, extra: Json = Json.obj()): IO[Unit] =
     for {
       p <- policies.get
       now <- Time.now
@@ -228,10 +179,7 @@ final class LoginService(
         val until = if p.lockout.lockMinutes > 0 then now.plusSeconds(p.lockout.lockMinutes.toLong * 60)
         else Instant.parse("9999-12-31T00:00:00Z")
         dir.users.recordFailure(x.id, p.lockout.maxFailures, until).flatMap {
-          (
-            n,
-            lockedUntil
-          ) =>
+          (n, lockedUntil) =>
             IO.whenA(lockedUntil.exists(_.isAfter(now)) && !x.locked(now))(
               audit.log(
                 c,
@@ -255,79 +203,70 @@ final class LoginService(
       )
     } yield ()
 
-  private def precheck(
-    c: ReqCtx
-  ): IO[Option[AppError]] =
+  private def precheck(c: ReqCtx): IO[Option[AppError]] =
     // IP 制限・試行の制限
     sessionsIp(c).flatMap {
       case false => IO.pure(Some(AppError(ErrorCode.LoginIpDenied)))
       case true => throttled(c).map(t => Option.when(t)(AppError(ErrorCode.LoginTooManyFailures)))
     }
 
-  private def sessionsIp(
-    c: ReqCtx
-  ): IO[Boolean] = policies.get.map(p => IpRules.allowedBy(c.ip, p.ip))
+  private def sessionsIp(c: ReqCtx): IO[Boolean] = policies.get.map(p => IpRules.allowedBy(c.ip, p.ip))
 
   // スパンにはユーザー名・パスワードを載せない（結果は監査ログ → AuditMetrics で数える）
-  def password(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: PasswordLoginReq
-  ): Res[FlowDto] = sbirds.observe.Telemetry.span("login.password")(
-    withFlow(bs, req.flowId) { f =>
-      precheck(c).flatMap {
-        case Some(e) => Res.fail(e)
-        case None =>
-          for {
-            now <- Time.now
-            u <- dir.users.byLoginName(req.username.trim)
-            res <- u match {
-              case None =>
-                IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
-                  failed(
-                    c,
-                    None,
-                    "login.failure",
-                    s"unknown user: ${req.username.take(64)}"
-                  ).as(Left(AppError(ErrorCode.LoginFailed)))
-              case Some(x) if x.isService || x.passwordHash.isEmpty =>
-                IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
-                  failed(c, Some(x), "login.failure", "password not set").as(Left(AppError(ErrorCode.LoginFailed)))
-              case Some(x) if x.locked(now) =>
-                // ロック中はパスワードを確かめない（正誤で応答を変えると、ロック中に総当たりできてしまう）. IP ごとの失敗としては数える
-                IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
-                  failed(c, None, "login.failure", s"locked: ${x.username}").as(Left(AppError(ErrorCode.LoginFailed)))
-              case Some(x) =>
-                IO.blocking(Passwords.verify(req.password, x.passwordHash.get)).flatMap {
-                  case false =>
-                    failed(c, Some(x), "login.failure", "wrong password").as(Left(AppError(ErrorCode.LoginFailed)))
-                  case true if x.disabled =>
-                    audit.log(
+  def password(c: ReqCtx, bs: BrowserSession, req: PasswordLoginReq): Res[FlowDto] =
+    sbirds.observe.Telemetry.span("login.password")(
+      withFlow(bs, req.flowId) { f =>
+        precheck(c).flatMap {
+          case Some(e) => Res.fail(e)
+          case None =>
+            for {
+              now <- Time.now
+              u <- dir.users.byLoginName(req.username.trim)
+              res <- u match {
+                case None =>
+                  IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
+                    failed(
                       c,
-                      Some(x),
-                      "web",
+                      None,
                       "login.failure",
-                      audit.userTarget(x),
-                      success = false,
-                      detail = Json.obj("reason" -> "disabled".asJson)
-                    )
-                      .as(Left(AppError(ErrorCode.AccountDisabled)))
-                  case true =>
-                    val f2 = f.copy(userId = Some(x.id), amr = List(Amr.Pwd))
-                    // 失敗の回数はログインの完了（多要素認証の後）で戻す. ここで戻すと、2つ目の要素の総当たりでロックを回避できる
-                    sessions.saveFlow(f2) *> advance(c, bs, f2, x).map(Right(_))
-                }
-            }
-          } yield res
+                      s"unknown user: ${req.username.take(64)}"
+                    ).as(Left(AppError(ErrorCode.LoginFailed)))
+                case Some(x) if x.isService || x.passwordHash.isEmpty =>
+                  IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
+                    failed(c, Some(x), "login.failure", "password not set").as(Left(AppError(ErrorCode.LoginFailed)))
+                case Some(x) if x.locked(now) =>
+                  // ロック中はパスワードを確かめない（正誤で応答を変えると、ロック中に総当たりできてしまう）. IP ごとの失敗としては数える
+                  IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
+                    failed(c, None, "login.failure", s"locked: ${x.username}").as(Left(AppError(ErrorCode.LoginFailed)))
+                case Some(x) =>
+                  IO.blocking(Passwords.verify(req.password, x.passwordHash.get)).flatMap {
+                    case false =>
+                      failed(c, Some(x), "login.failure", "wrong password").as(Left(AppError(ErrorCode.LoginFailed)))
+                    case true if x.disabled =>
+                      audit.log(
+                        c,
+                        Some(x),
+                        "web",
+                        "login.failure",
+                        audit.userTarget(x),
+                        success = false,
+                        detail = Json.obj("reason" -> "disabled".asJson)
+                      )
+                        .as(Left(AppError(ErrorCode.AccountDisabled)))
+                    case true =>
+                      val f2 = f.copy(userId = Some(x.id), amr = List(Amr.Pwd))
+                      // 失敗の回数はログインの完了（多要素認証の後）で戻す. ここで戻すと、2つ目の要素の総当たりでロックを回避できる
+                      sessions.saveFlow(f2) *> advance(c, bs, f2, x).map(Right(_))
+                  }
+              }
+            } yield res
+        }
       }
-    }
-  )
+    )
 
   // ------------------------------------------------------------------ 次の段階
 
-  private def appRequiresMfa(
-    f: LoginFlow
-  ): IO[Boolean] =
+  private def appRequiresMfa(f: LoginFlow): IO[Boolean] =
     f.authRequestId.fold(IO.pure(false))(id =>
       Time.now.flatMap(now => tokens.request(id, now)).flatMap(_.fold(IO.pure(false))(r =>
         apps.find(r.appId).map(_.exists(_.requireMfa))
@@ -335,12 +274,7 @@ final class LoginService(
     )
 
   /** 本人確認の後に何が必要かを決める. */
-  def advance(
-    c: ReqCtx,
-    bs: BrowserSession,
-    f: LoginFlow,
-    u: User
-  ): IO[FlowDto] =
+  def advance(c: ReqCtx, bs: BrowserSession, f: LoginFlow, u: User): IO[FlowDto] =
     for {
       now <- Time.now
       m <- dir.membership(u)
@@ -366,17 +300,10 @@ final class LoginService(
         else complete(c, bs, f, u)
     } yield res
 
-  private def save(
-    f: LoginFlow
-  ): IO[FlowDto] = sessions.saveFlow(f) *> dto(f)
+  private def save(f: LoginFlow): IO[FlowDto] = sessions.saveFlow(f) *> dto(f)
 
   /** ログインを完了する（ブラウザのセッションにアカウントを加えて使用中にする）. */
-  def complete(
-    c: ReqCtx,
-    bs: BrowserSession,
-    f: LoginFlow,
-    u: User
-  ): IO[FlowDto] =
+  def complete(c: ReqCtx, bs: BrowserSession, f: LoginFlow, u: User): IO[FlowDto] =
     for {
       p <- dir.policyFor(u)
       now <- Time.now
@@ -417,27 +344,16 @@ final class LoginService(
 
   // ------------------------------------------------------------------ 2つ目の要素
 
-  private def addMfa(
-    f: LoginFlow,
-    method: String
-  ): LoginFlow = f.copy(amr = (f.amr ++ List(method, Amr.Mfa)).distinct)
+  private def addMfa(f: LoginFlow, method: String): LoginFlow = f.copy(amr = (f.amr ++ List(method, Amr.Mfa)).distinct)
 
-  def mfa(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: MfaReq
-  ): Res[FlowDto] =
+  def mfa(c: ReqCtx, bs: BrowserSession, req: MfaReq): Res[FlowDto] =
     sbirds.observe.Telemetry.span("login.mfa", "method" -> AuditMetrics.mfaMethod(req.method))(
       withFlow(bs, req.flowId) { f =>
         withUser(f) { u =>
           if f.stage != "mfa" then Res.fail(ErrorCode.LoginStepInvalid)
           else
             (throttled(c), dir.policyFor(u), Time.now).flatMapN {
-              (
-                thr,
-                p,
-                now
-              ) =>
+              (thr, p, now) =>
                 if thr then Res.fail(AppError(ErrorCode.TooManyAttempts))
                 else if u.locked(now) then Res.fail(ErrorCode.AccountLocked)
                 else {
@@ -496,18 +412,11 @@ final class LoginService(
     )
 
   /** メールでワンタイムコードを送る. */
-  def sendEmailCode(
-    c: ReqCtx,
-    bs: BrowserSession,
-    flowId: UUID
-  ): Res[FlowDto] =
+  def sendEmailCode(c: ReqCtx, bs: BrowserSession, flowId: UUID): Res[FlowDto] =
     withFlow(bs, flowId) { f =>
       withUser(f) { u =>
         (dir.policyFor(u), Time.now).flatMapN {
-          (
-            p,
-            now
-          ) =>
+          (p, now) =>
             val last = f.data.hcursor.get[Long]("emailAt").getOrElse(0L)
             if f.stage != "mfa" || !p.mfa.allowEmail || u.email.isEmpty then Res.fail(ErrorCode.EmailCodeDisabled)
             else if now.getEpochSecond - last < 30 then Res.fail(AppError(ErrorCode.EmailCodeTooSoon))
@@ -539,10 +448,7 @@ final class LoginService(
 
   // ------------------------------------------------------------------ 認証アプリの登録（必須のとき）
 
-  def enrollTotp(
-    bs: BrowserSession,
-    flowId: UUID
-  ): Res[FlowDto] =
+  def enrollTotp(bs: BrowserSession, flowId: UUID): Res[FlowDto] =
     withFlow(bs, flowId) { f =>
       withUser(f) { u =>
         if f.stage != "enroll_mfa" then Res.fail(ErrorCode.LoginStepInvalid)
@@ -560,11 +466,7 @@ final class LoginService(
     }
 
   /** 認証アプリのコードを確かめて登録を終える. 回復コードを返す（この1回だけ表示する）. */
-  def verifyEnroll(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: FlowTotpVerifyReq
-  ): Res[FlowDto] =
+  def verifyEnroll(c: ReqCtx, bs: BrowserSession, req: FlowTotpVerifyReq): Res[FlowDto] =
     withFlow(bs, req.flowId) { f =>
       withUser(f) { u =>
         factors.totp(req.deviceId).flatMap {
@@ -588,30 +490,20 @@ final class LoginService(
       }
     }
 
-  def newRecoveryCodes(
-    userId: UUID
-  ): IO[List[String]] = {
+  def newRecoveryCodes(userId: UUID): IO[List[String]] = {
     val codes = List.fill(10)(Crypto.randomCode(10))
     factors.setRecoveryCodes(userId, codes.map(Crypto.sha256)).as(codes.map(c => c.take(5) + "-" + c.drop(5)))
   }
 
   /** 回復コードを確認した後に続ける. */
-  def continue(
-    c: ReqCtx,
-    bs: BrowserSession,
-    flowId: UUID
-  ): Res[FlowDto] =
+  def continue(c: ReqCtx, bs: BrowserSession, flowId: UUID): Res[FlowDto] =
     withFlow(bs, flowId)(f =>
       withUser(f)(u => if f.stage == "show_recovery" then advance(c, bs, f, u).map(Right(_)) else dto(f).map(Right(_)))
     )
 
   // ------------------------------------------------------------------ パスワードの変更（期限切れ・管理者の指定）
 
-  def changePassword(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: FlowPasswordReq
-  ): Res[FlowDto] =
+  def changePassword(c: ReqCtx, bs: BrowserSession, req: FlowPasswordReq): Res[FlowDto] =
     withFlow(bs, req.flowId) { f =>
       withUser(f) { u =>
         if f.stage != "change_password" then Res.fail(ErrorCode.LoginStepInvalid)
@@ -636,22 +528,17 @@ final class LoginService(
 
   // ------------------------------------------------------------------ ほかの方法での本人確認（証明書・外部の IdP）
 
-  def externalAuthenticated(
-    c: ReqCtx,
-    bs: BrowserSession,
-    flowId: UUID,
-    u: User,
-    amr: List[String],
-    action: String,
-    detail: Json
-  ): Res[FlowDto] =
+  def externalAuthenticated(c: ReqCtx,
+                            bs: BrowserSession,
+                            flowId: UUID,
+                            u: User,
+                            amr: List[String],
+                            action: String,
+                            detail: Json): Res[FlowDto] =
     withFlow(bs, flowId) { f =>
       // IP アドレスの制限は、パスワード以外の方法でも同じように効かせる
       (sessionsIp(c), Time.now).flatMapN {
-        (
-          ipOk,
-          now
-        ) =>
+        (ipOk, now) =>
           if !ipOk then Res.fail(ErrorCode.LoginIpDenied)
           else if u.disabled then
             audit.log(
@@ -676,30 +563,19 @@ final class LoginService(
     }
 
   /** 失敗の記録（外部の IdP・証明書）. */
-  def externalFailed(
-    c: ReqCtx,
-    u: Option[User],
-    action: String,
-    reason: String
-  ): IO[Unit] = failed(c, u, action, reason)
+  def externalFailed(c: ReqCtx, u: Option[User], action: String, reason: String): IO[Unit] =
+    failed(c, u, action, reason)
 
   // ------------------------------------------------------------------ パスワードを忘れた
 
-  def forgot(
-    c: ReqCtx,
-    req: ForgotReq
-  ): IO[Unit] =
+  def forgot(c: ReqCtx, req: ForgotReq): IO[Unit] =
     // メールの送りすぎを防ぐ（同じ IP アドレスから15分に10回まで）
     (
       throttled(c),
       policies.get,
       Time.now.flatMap(now => factors.throttleFail("forgot:" + IpRules.throttleKey(c.ip), now.minusSeconds(15 * 60)))
     ).flatMapN {
-      (
-        thr,
-        p,
-        n
-      ) =>
+      (thr, p, n) =>
         IO.unlessA(thr || n > 10) {
           dir.users.byLoginName(req.username.trim).flatMap {
             case Some(u) if !u.disabled && !u.isService && u.email.isDefined && u.source == "local" =>
@@ -730,10 +606,7 @@ final class LoginService(
         }
     }
 
-  def reset(
-    c: ReqCtx,
-    req: ResetReq
-  ): Res[Unit] =
+  def reset(c: ReqCtx, req: ResetReq): Res[Unit] =
     Time.now.flatMap(now => factors.emailTokenByHash("reset", Crypto.sha256(req.token.trim), now)).flatMap {
       case None => Res.fail(ErrorCode.ResetLinkInvalid)
       case Some(t) =>
@@ -759,11 +632,7 @@ final class LoginService(
 
   // ------------------------------------------------------------------ 自分でアカウントを作る
 
-  def register(
-    c: ReqCtx,
-    bs: BrowserSession,
-    req: RegisterReq
-  ): Res[FlowDto] =
+  def register(c: ReqCtx, bs: BrowserSession, req: RegisterReq): Res[FlowDto] =
     policies.get.flatMap { p =>
       if !p.branding.selfRegistration then Res.fail(ErrorCode.SignupDisabled)
       else

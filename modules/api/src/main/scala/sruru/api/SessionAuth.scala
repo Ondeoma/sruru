@@ -22,19 +22,16 @@ object SessionAuth {
   val McpCall: org.typelevel.vault.Key[Unit] = org.typelevel.vault.Key.newKey[SyncIO, Unit].unsafeRunSync()
 }
 
-final class SessionAuth(
-  sessions: SessionStore,
-  factors: FactorStore,
-  dir: Directory,
-  policies: PolicyService,
-  cfg: ApiConfig) {
+final class SessionAuth(sessions: SessionStore,
+                        factors: FactorStore,
+                        dir: Directory,
+                        policies: PolicyService,
+                        cfg: ApiConfig) {
 
   // ------------------------------------------------------------------ 要求元
 
   /** この要求で提示されたクライアント証明書のチェーン（TLS か、信頼するプロキシからのヘッダー）. */
-  def presentedChain(
-    req: Request[IO]
-  ): IO[Option[List[java.security.cert.X509Certificate]]] =
+  def presentedChain(req: Request[IO]): IO[Option[List[java.security.cert.X509Certificate]]] =
     policies.get.map { p =>
       val remote = req.remote.map(_.host.toString).getOrElse("-")
       val fromTls =
@@ -48,9 +45,7 @@ final class SessionAuth(
       fromTls.orElse(fromHdr)
     }
 
-  def reqCtx(
-    req: Request[IO]
-  ): IO[ReqCtx] =
+  def reqCtx(req: Request[IO]): IO[ReqCtx] =
     policies.get.map { p =>
       val remote = req.remote.map(_.host.toString).getOrElse("-")
       val ip = IpRules.clientIp(
@@ -62,44 +57,23 @@ final class SessionAuth(
     }
 
   /** ユーザーに効く IP の許可・拒否（全体とグループの上書き）. */
-  def ipAllowed(
-    req: Request[IO],
-    u: User,
-    m: Membership
-  ): IO[Boolean] =
-    (reqCtx(req), dir.policyFor(u, m)).mapN(
-      (
-        c,
-        p
-      ) => IpRules.allowedBy(c.ip, p.ip)
-    )
+  def ipAllowed(req: Request[IO], u: User, m: Membership): IO[Boolean] =
+    (reqCtx(req), dir.policyFor(u, m)).mapN((c, p) => IpRules.allowedBy(c.ip, p.ip))
 
   /** 管理機能の IP 制限. */
-  def adminIpAllowed(
-    req: Request[IO]
-  ): IO[Boolean] =
-    (reqCtx(req), policies.get).mapN(
-      (
-        c,
-        p
-      ) => p.ip.adminAllow.isEmpty || IpRules.matches(c.ip, p.ip.adminAllow)
-    )
+  def adminIpAllowed(req: Request[IO]): IO[Boolean] =
+    (reqCtx(req), policies.get).mapN((c, p) => p.ip.adminAllow.isEmpty || IpRules.matches(c.ip, p.ip.adminAllow))
 
   // ------------------------------------------------------------------ ブラウザのセッション
 
-  private def token(
-    req: Request[IO]
-  ): Option[String] = req.cookies.find(_.name == cfg.cookieName).map(_.content).filter(_.nonEmpty)
+  private def token(req: Request[IO]): Option[String] =
+    req.cookies.find(_.name == cfg.cookieName).map(_.content).filter(_.nonEmpty)
 
-  def browser(
-    req: Request[IO]
-  ): IO[Option[BrowserSession]] =
+  def browser(req: Request[IO]): IO[Option[BrowserSession]] =
     token(req).fold(IO.pure(None))(t => Time.now.flatMap(now => sessions.findBrowser(Crypto.sha256(t), now)))
 
   /** ブラウザのセッション（なければ作り、Cookie を返す）. */
-  def ensureBrowser(
-    req: Request[IO]
-  ): IO[(BrowserSession, Option[ResponseCookie])] =
+  def ensureBrowser(req: Request[IO]): IO[(BrowserSession, Option[ResponseCookie])] =
     browser(req).flatMap {
       case Some(b) => IO.pure((b, None))
       case None =>
@@ -114,14 +88,9 @@ final class SessionAuth(
     }
 
   /** ブラウザのセッションの Cookie の値を新しくする. */
-  def rotate(
-    b: BrowserSession
-  ): IO[ResponseCookie] =
+  def rotate(b: BrowserSession): IO[ResponseCookie] =
     (policies.get, Time.now).flatMapN {
-      (
-        p,
-        now
-      ) =>
+      (p, now) =>
         val t = Crypto.randomToken()
         sessions.rotate(b.id, Crypto.sha256(t)).as(cookie(
           t,
@@ -130,10 +99,7 @@ final class SessionAuth(
         ))
     }
 
-  def cookie(
-    value: String,
-    maxAge: Long
-  ): ResponseCookie =
+  def cookie(value: String, maxAge: Long): ResponseCookie =
     ResponseCookie(
       cfg.cookieName,
       value,
@@ -147,9 +113,7 @@ final class SessionAuth(
   def clearCookie: ResponseCookie = cookie("", 0)
 
   /** 使用中のログイン（期限・無操作の時間・ユーザーの状態を確かめる）. */
-  def active(
-    b: BrowserSession
-  ): IO[Option[(Login, User)]] =
+  def active(b: BrowserSession): IO[Option[(Login, User)]] =
     b.activeUser.fold(IO.pure(None)) { uid =>
       for {
         now <- Time.now
@@ -173,30 +137,19 @@ final class SessionAuth(
       } yield res
     }
 
-  def activeFor(
-    req: Request[IO]
-  ): IO[Option[(BrowserSession, Login, User)]] =
+  def activeFor(req: Request[IO]): IO[Option[(BrowserSession, Login, User)]] =
     browser(req).flatMap(_.fold(IO.pure(None))(b =>
-      active(b).map(_.map(
-        (
-          l,
-          u
-        ) => (b, l, u)
-      ))
+      active(b).map(_.map((l, u) => (b, l, u)))
     ))
 
   // ------------------------------------------------------------------ 利用者
 
-  private def bearer(
-    req: Request[IO]
-  ): Option[String] =
+  private def bearer(req: Request[IO]): Option[String] =
     req.headers.get[Authorization].collect { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }.filter(
       ApiTokens.looksLike
     )
 
-  def principal(
-    req: Request[IO]
-  ): IO[Option[Principal]] =
+  def principal(req: Request[IO]): IO[Option[Principal]] =
     bearer(req) match {
       case Some(t) =>
         Time.now.flatMap(now => factors.findToken(Crypto.sha256(t), now)).flatMap {

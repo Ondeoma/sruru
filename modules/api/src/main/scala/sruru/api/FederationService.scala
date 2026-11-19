@@ -19,24 +19,19 @@ import scala.concurrent.duration.*
  * 同期したユーザーは source = プロバイダのスラッグ、external_id = ディレクトリの ID（Google の sub・Entra の oid と同じ）なので、
  * 外部の IdP でのログインと自動で結び付く.
  */
-final class FederationService(
-  store: FederationStore,
-  dir: Directory,
-  audit: AuditService,
-  box: SecretBox,
-  http: Client[IO],
-  lock: JobLock,
-  cfg: ApiConfig) {
+final class FederationService(store: FederationStore,
+                              dir: Directory,
+                              audit: AuditService,
+                              box: SecretBox,
+                              http: Client[IO],
+                              lock: JobLock,
+                              cfg: ApiConfig) {
 
   private val upstream = new UpstreamOidc(http)
 
-  def callbackUrl(
-    slug: String
-  ): String = s"${cfg.publicUrl}/auth/fed/$slug/callback"
+  def callbackUrl(slug: String): String = s"${cfg.publicUrl}/auth/fed/$slug/callback"
 
-  def upstreamConfig(
-    p: FederationProvider
-  ): UpstreamConfig = {
+  def upstreamConfig(p: FederationProvider): UpstreamConfig = {
     val extra = p.kind match {
       case "google" => Presets.googleParams(p.allowedDomains.headOption.filter(_ => p.allowedDomains.size == 1))
       case "entra" => Presets.entraParams(true)
@@ -56,10 +51,7 @@ final class FederationService(
   // ------------------------------------------------------------------ ログイン
 
   /** 認可の URL と、callback で確かめる値（state・nonce・PKCE の verifier）. */
-  def start(
-    p: FederationProvider,
-    flowId: UUID
-  ): IO[(org.http4s.Uri, Json)] = {
+  def start(p: FederationProvider, flowId: UUID): IO[(org.http4s.Uri, Json)] = {
     val state = flowId.toString + "." + Crypto.randomToken(16)
     val nonce = Crypto.randomToken(16)
     val verifier = Crypto.randomToken(32)
@@ -72,23 +64,13 @@ final class FederationService(
       ))
   }
 
-  def exchange(
-    p: FederationProvider,
-    code: String,
-    verifier: String,
-    nonce: String
-  ): IO[UpstreamIdentity] =
+  def exchange(p: FederationProvider, code: String, verifier: String, nonce: String): IO[UpstreamIdentity] =
     Time.now.flatMap(now => upstream.exchange(upstreamConfig(p), code, verifier, nonce, now))
 
-  private def allowed(
-    p: FederationProvider
-  ): List[String] = p.allowedDomains.map(_.trim.toLowerCase).filter(_.nonEmpty)
+  private def allowed(p: FederationProvider): List[String] = p.allowedDomains.map(_.trim.toLowerCase).filter(_.nonEmpty)
 
   /** Entra のテナントが許可リストにあるか（テナントの ID かテナントのドメインを書く）. */
-  private def tenantAllowed(
-    p: FederationProvider,
-    id: UpstreamIdentity
-  ): Boolean =
+  private def tenantAllowed(p: FederationProvider, id: UpstreamIdentity): Boolean =
     id.tenantId.exists(t => allowed(p).contains(t.toLowerCase))
 
   /**
@@ -97,10 +79,7 @@ final class FederationService(
    * Google は Workspace のドメイン（hd）だけで判定する（会社のアドレスで作った個人の Google アカウントは Workspace の管理外のため）.
    * そのほかは確認済みのメールアドレスのドメインで判定する.
    */
-  private def domainOk(
-    p: FederationProvider,
-    id: UpstreamIdentity
-  ): Boolean =
+  private def domainOk(p: FederationProvider, id: UpstreamIdentity): Boolean =
     allowed(p).isEmpty || (
       p.kind match {
         case "entra" => tenantAllowed(p, id)
@@ -114,18 +93,11 @@ final class FederationService(
    * メールアドレスを信頼してよいか. 上流が確認済みとしたもの. Entra は email_verified を出さないので、
    * 許可リストに書いたテナント（自組織が管理するテナント）のときだけ信頼する.
    */
-  private def emailTrusted(
-    p: FederationProvider,
-    id: UpstreamIdentity
-  ): Boolean =
+  private def emailTrusted(p: FederationProvider, id: UpstreamIdentity): Boolean =
     id.emailVerified || (p.kind == "entra" && tenantAllowed(p, id))
 
-  private def uniqueUsername(
-    base: String
-  ): IO[String] = {
-    def go(
-      n: Int
-    ): IO[String] = {
+  private def uniqueUsername(base: String): IO[String] = {
+    def go(n: Int): IO[String] = {
       val name = if n == 0 then base else s"$base$n"
       dir.users.byUsername(name).flatMap(_.fold(IO.pure(name))(_ => go(n + 1)))
     }
@@ -133,10 +105,7 @@ final class FederationService(
   }
 
   /** 外部のアカウントに対応するユーザー（結び付け・自動作成を含む）. Left は利用者に見せる文. */
-  def resolve(
-    p: FederationProvider,
-    id: UpstreamIdentity
-  ): IO[Either[String, User]] =
+  def resolve(p: FederationProvider, id: UpstreamIdentity): IO[Either[String, User]] =
     if !domainOk(p, id) then IO.pure(Left("このアカウントのドメインではログインできません"))
     else
       store.identity(p.id, id.subject).flatMap {
@@ -200,26 +169,18 @@ final class FederationService(
         case l => IO.pure(l)
       }
 
-  def amr(
-    p: FederationProvider,
-    id: UpstreamIdentity
-  ): List[String] =
+  def amr(p: FederationProvider, id: UpstreamIdentity): List[String] =
     List(Amr.Fed) ++
       (if p.trustMfa && (id.amr.contains("mfa") || id.amr.contains("otp") || id.amr.contains("hwk")) then List(Amr.Mfa)
        else Nil)
 
   // ------------------------------------------------------------------ ディレクトリの同期
 
-  def syncConfig(
-    p: FederationProvider
-  ): Option[Json] = p.syncConfigEnc.flatMap(box.decrypt).flatMap(s => io.circe.parser.parse(s).toOption)
+  def syncConfig(p: FederationProvider): Option[Json] =
+    p.syncConfigEnc.flatMap(box.decrypt).flatMap(s => io.circe.parser.parse(s).toOption)
 
   /** 同期する. 結果の文を返す（監査ログ・管理画面に出す）. */
-  def sync(
-    p: FederationProvider,
-    actor: Option[User],
-    c: ReqCtx
-  ): IO[String] =
+  def sync(p: FederationProvider, actor: Option[User], c: ReqCtx): IO[String] =
     syncConfig(p).toRight("同期の設定がありません").flatMap(j => DirectorySources.from(p.kind, j, http)) match {
       case Left(e) => store.recordSync(p.id, s"失敗: $e") *> IO.pure(s"失敗: $e")
       case Right(src) =>
@@ -245,11 +206,7 @@ final class FederationService(
     }
 
   /** (作成, 更新, 無効化, 問題). */
-  private def apply(
-    p: FederationProvider,
-    src: DirectorySource,
-    snap: DirSnapshot
-  ): IO[(Int, Int, Int, List[String])] =
+  private def apply(p: FederationProvider, src: DirectorySource, snap: DirSnapshot): IO[(Int, Int, Int, List[String])] =
     for {
       existing <- dir.users.list(UserQuery(source = Some(p.slug), limit = 1000000), Instant.now()).map(_._1)
       byExt = existing.flatMap(u => u.externalId.map(_ -> u)).toMap
@@ -336,10 +293,7 @@ final class FederationService(
                 case Right(g) => (None, Some(g.id))
               }
         }.flatMap {
-          (
-            problem,
-            gid
-          ) =>
+          (problem, gid) =>
             gid.traverse_(id => dir.groups.setMembers(id, dg.memberUserIds.flatMap(idByExt.get))).as(problem)
         }
       }
@@ -355,10 +309,7 @@ final class FederationService(
   def loop: IO[Nothing] =
     Loops.every(1.minute, 5.minutes, ErrorCode.DirectorySyncFailed) {
       (store.all, Time.now).flatMapN {
-        (
-          ps,
-          now
-        ) =>
+        (ps, now) =>
           ps.filter(p =>
             p.enabled && p.syncEnabled &&
               p.lastSyncAt.forall(_.plusSeconds(p.syncIntervalMin.toLong * 60).isBefore(now))

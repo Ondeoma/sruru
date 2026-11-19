@@ -7,39 +7,20 @@ import sruru.core.ScimFilter.{Filter, PatchPath}
 /** SCIM の JSON の操作（PATCH の適用）. 属性名は大文字小文字を区別しない. */
 object ScimJson {
 
-  private def key(
-    o: JsonObject,
-    name: String
-  ): String = o.keys.find(_.equalsIgnoreCase(name)).getOrElse(name)
+  private def key(o: JsonObject, name: String): String = o.keys.find(_.equalsIgnoreCase(name)).getOrElse(name)
 
-  def get(
-    j: Json,
-    name: String
-  ): Json = j.asObject.flatMap(o => o(key(o, name))).getOrElse(Json.Null)
+  def get(j: Json, name: String): Json = j.asObject.flatMap(o => o(key(o, name))).getOrElse(Json.Null)
 
-  def set(
-    j: Json,
-    name: String,
-    v: Json
-  ): Json = j.mapObject(o => o.add(key(o, name), v))
+  def set(j: Json, name: String, v: Json): Json = j.mapObject(o => o.add(key(o, name), v))
 
-  def remove(
-    j: Json,
-    name: String
-  ): Json = j.mapObject(o => o.remove(key(o, name)))
+  def remove(j: Json, name: String): Json = j.mapObject(o => o.remove(key(o, name)))
 
   /** 複数値の属性に要素を加える（同じ value の要素は置き換える）. */
-  private def addValues(
-    cur: Json,
-    v: Json
-  ): Json = {
+  private def addValues(cur: Json, v: Json): Json = {
     val items = v.asArray.map(_.toList).getOrElse(List(v))
     val base = cur.asArray.map(_.toList).getOrElse(if cur.isNull then Nil else List(cur))
     val merged = items.foldLeft(base) {
-      (
-        acc,
-        it
-      ) =>
+      (acc, it) =>
         val idv = get(it, "value")
         if !idv.isNull && acc.exists(x => get(x, "value") == idv) then
           acc.map(x => if get(x, "value") == idv then x.deepMerge(it) else x)
@@ -49,20 +30,13 @@ object ScimJson {
   }
 
   /** eq だけの条件から新しい要素の値を作る（emails[type eq "work"].value の追加）. */
-  private def seed(
-    f: Filter
-  ): Json = f match {
+  private def seed(f: Filter): Json = f match {
     case Filter.Compare(p, "eq", v) => Json.obj(p.attr -> v)
     case Filter.And(a, b) => seed(a).deepMerge(seed(b))
     case _ => Json.obj()
   }
 
-  def applyOp(
-    res: Json,
-    op: String,
-    path: Option[String],
-    value: Json
-  ): Either[String, Json] =
+  def applyOp(res: Json, op: String, path: Option[String], value: Json): Either[String, Json] =
     path.filter(_.trim.nonEmpty) match {
       case None =>
         // パスなし: 値のオブジェクトの各キーをパスとして扱う（Entra は "name.givenName" のようなキーを送る）
@@ -82,12 +56,7 @@ object ScimJson {
         }
     }
 
-  private def applyAt(
-    obj: Json,
-    op: String,
-    pp: PatchPath,
-    value: Json
-  ): Json = {
+  private def applyAt(obj: Json, op: String, pp: PatchPath, value: Json): Json = {
     val attr = pp.attr.attr
     val cur = get(obj, attr)
     (pp.filter, pp.attr.sub.orElse(pp.subAttr)) match {
@@ -105,11 +74,8 @@ object ScimJson {
           val idx = arr.indexWhere(x => get(x, "primary").asBoolean.contains(true)) match { case -1 => 0; case i => i }
           val next = if arr.isEmpty then List(if op == "remove" then Json.obj() else Json.obj(sub -> value))
           else
-            arr.zipWithIndex.map(
-              (
-                x,
-                i
-              ) => if i == idx then (if op == "remove" then remove(x, sub) else set(x, sub, value)) else x
+            arr.zipWithIndex.map((x, i) =>
+              if i == idx then (if op == "remove" then remove(x, sub) else set(x, sub, value)) else x
             )
           set(obj, attr, Json.fromValues(next))
         } else {

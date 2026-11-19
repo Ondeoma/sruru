@@ -27,14 +27,8 @@ class RpCompatSpec extends CatsEffectSuite {
       case None => IO(assume(false, "SRURU_URL が未設定"))
       case Some(b) =>
         EmberClientBuilder.default[IO].build.use { http =>
-          def cookies(
-            r: Response[IO]
-          ): String = r.cookies.map(c => s"${c.name}=${c.content}").mkString("; ")
-          def post(
-            path: String,
-            body: Json,
-            cookie: String
-          ) =
+          def cookies(r: Response[IO]): String = r.cookies.map(c => s"${c.name}=${c.content}").mkString("; ")
+          def post(path: String, body: Json, cookie: String) =
             Request[IO](
               Method.POST,
               Uri.unsafeFromString(b + path)

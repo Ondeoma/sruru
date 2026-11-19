@@ -5,10 +5,7 @@ package sruru.core
  * 1xxx: 認証・共通, 2xxx: ログイン・本人確認, 3xxx: ユーザー, 4xxx: グループ, 5xxx: アプリケーション, 6xxx: 管理（鍵・属性・初期設定）,
  * 7xxx: 外部の IdP・証明書, 8xxx: SCIM, 9xxx: サーバー内部・バックグラウンドの処理.
  */
-enum ErrorCode(
-  val code: String,
-  val status: Int,
-  val message: String) extends sbirds.shared.ErrorCode {
+enum ErrorCode(val code: String, val status: Int, val message: String) extends sbirds.shared.ErrorCode {
   case RequestTooLarge extends ErrorCode("SRURU-1001", 413, "送られたデータが大きすぎます")
   case JsonBodyUnreadable extends ErrorCode("SRURU-1002", 400, "JSON の本文を読めません")
   case RequestBodyInvalid extends ErrorCode("SRURU-1003", 400, "本文の形式が正しくありません: …")

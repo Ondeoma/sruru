@@ -13,9 +13,7 @@ object Totp {
 
   private val Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
-  def base32(
-    b: Array[Byte]
-  ): String = {
+  def base32(b: Array[Byte]): String = {
     val sb = new StringBuilder
     var buffer = 0
     var bits = 0
@@ -31,9 +29,7 @@ object Totp {
     sb.toString
   }
 
-  def base32Decode(
-    s: String
-  ): Array[Byte] = {
+  def base32Decode(s: String): Array[Byte] = {
     val clean = s.toUpperCase.filter(Alphabet.contains(_))
     val out = new java.io.ByteArrayOutputStream()
     var buffer = 0
@@ -51,10 +47,7 @@ object Totp {
 
   def newSecret(): String = base32(Crypto.randomBytes(20))
 
-  def code(
-    secret: String,
-    step: Long
-  ): String = {
+  def code(secret: String, step: Long): String = {
     val mac = Mac.getInstance("HmacSHA1")
     mac.init(new SecretKeySpec(base32Decode(secret), "HmacSHA1"))
     val h = mac.doFinal(ByteBuffer.allocate(8).putLong(step).array())
@@ -64,20 +57,13 @@ object Totp {
     f"$n%06d"
   }
 
-  def step(
-    epochSeconds: Long
-  ): Long = epochSeconds / Period
+  def step(epochSeconds: Long): Long = epochSeconds / Period
 
   /**
    * コードを確かめる（前後1ステップのずれを許す）. 合っていればそのステップ.
    * lastUsed 以下のステップは受け付けない（同じコードの使い回しを防ぐ）.
    */
-  def verify(
-    secret: String,
-    input: String,
-    epochSeconds: Long,
-    lastUsed: Long
-  ): Option[Long] = {
+  def verify(secret: String, input: String, epochSeconds: Long, lastUsed: Long): Option[Long] = {
     val c = input.filter(_.isDigit)
     if c.length != Digits then None
     else {
@@ -86,14 +72,8 @@ object Totp {
     }
   }
 
-  def uri(
-    issuer: String,
-    account: String,
-    secret: String
-  ): String = {
-    def e(
-      s: String
-    ) = URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20")
+  def uri(issuer: String, account: String, secret: String): String = {
+    def e(s: String) = URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20")
     s"otpauth://totp/${e(issuer)}:${e(account)}?secret=$secret&issuer=${e(issuer)}&algorithm=SHA1&digits=$Digits&period=$Period"
   }
 }

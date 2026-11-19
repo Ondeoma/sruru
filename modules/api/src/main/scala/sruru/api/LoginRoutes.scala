@@ -21,21 +21,20 @@ import java.util.UUID
  * ログインしていなくても使うルート: 画面の設定・最初の管理者・ログインの流れ・アカウントの切り替え・同意・
  * クライアント証明書と外部の IdP でのログイン・アイコンの画像.
  */
-final class LoginRoutes(
-  login: LoginService,
-  fed: FederationService,
-  fedStore: FederationStore,
-  val auth: SessionAuth,
-  sessions: SessionStore,
-  tokens: TokenStore,
-  apps: AppStore,
-  dir: Directory,
-  factors: FactorStore,
-  settings: SettingsStore,
-  policies: PolicyService,
-  audit: AuditService,
-  box: SecretBox,
-  cfg: ApiConfig) extends RouteSupport {
+final class LoginRoutes(login: LoginService,
+                        fed: FederationService,
+                        fedStore: FederationStore,
+                        val auth: SessionAuth,
+                        sessions: SessionStore,
+                        tokens: TokenStore,
+                        apps: AppStore,
+                        dir: Directory,
+                        factors: FactorStore,
+                        settings: SettingsStore,
+                        policies: PolicyService,
+                        audit: AuditService,
+                        box: SecretBox,
+                        cfg: ApiConfig) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "api" / "client-config" => getClientConfig(req)
@@ -67,18 +66,10 @@ final class LoginRoutes(
     case GET -> Root / "api" / "endpoints" => getEndpoints()
   }
 
-  private def getClientConfig(
-    req: Request[IO]
-  ): IO[Response[IO]] = {
+  private def getClientConfig(req: Request[IO]): IO[Response[IO]] = {
     // ログインしていれば、使用中のアカウントのグループの上書き（サービス名・ロゴ・案内）を反映する
     (policies.get, auth.activeFor(req), fedStore.all, dir.passwordRules, dir.users.adminCount).flatMapN {
-      (
-        global,
-        active,
-        fs,
-        rules,
-        admins
-      ) =>
+      (global, active, fs, rules, admins) =>
         active.fold(IO.pure(global))(a => dir.policyFor(a._3)).flatMap { p =>
           Ok(ClientConfigDto(
             p.branding.title,
@@ -97,121 +88,76 @@ final class LoginRoutes(
     }
   }
 
-  private def postSetup(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postSetup(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[SetupReq](req)(setup(req, _)))
 
-  private def postLoginStart(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginStart(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[LoginStartReq](req) { r =>
       withBrowser(req)(bs =>
-        (ctx(req), auth.active(bs)).flatMapN(
-          (
-            c,
-            cur
-          ) => flowJson(bs)(login.start(c, bs, r, cur))
-        )
+        (ctx(req), auth.active(bs)).flatMapN((c, cur) => flowJson(bs)(login.start(c, bs, r, cur)))
       )
     })
 
-  private def getLoginFlow(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getLoginFlow(req: Request[IO], id: UUID): IO[Response[IO]] =
     withBrowser(req)(bs => flowJson(bs)(login.get(bs, id)))
 
-  private def postLoginPassword(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginPassword(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[PasswordLoginReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.password(c, bs, r))))
     ))
 
-  private def postLoginMfa(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginMfa(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[MfaReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.mfa(c, bs, r))))
     ))
 
-  private def postLoginMfaEmail(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginMfaEmail(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[FlowReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.sendEmailCode(c, bs, r.flowId))))
     ))
 
-  private def postLoginEnrollTotp(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginEnrollTotp(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[FlowReq](req)(r => withBrowser(req)(bs => flowJson(bs)(login.enrollTotp(bs, r.flowId)))))
 
-  private def postLoginEnrollTotpVerify(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginEnrollTotpVerify(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[FlowTotpVerifyReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.verifyEnroll(c, bs, r))))
     ))
 
-  private def postLoginContinue(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginContinue(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[FlowReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.continue(c, bs, r.flowId))))
     ))
 
-  private def postLoginChangePassword(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginChangePassword(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[FlowPasswordReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.changePassword(c, bs, r))))
     ))
 
-  private def postLoginRegister(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginRegister(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[RegisterReq](req)(r =>
       withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(login.register(c, bs, r))))
     ))
 
-  private def postLoginForgot(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginForgot(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[ForgotReq](req)(r => ctx(req).flatMap(c => login.forgot(c, r)) *> NoContent()))
 
-  private def postLoginReset(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postLoginReset(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[ResetReq](req)(r => ctx(req).flatMap(c => noContent(login.reset(c, r)))))
 
-  private def getAuthCert(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAuthCert(req: Request[IO]): IO[Response[IO]] =
     q(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(certLogin(req, _))
 
-  private def getAuthFedStart(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] =
+  private def getAuthFedStart(req: Request[IO], slug: String): IO[Response[IO]] =
     q(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(fedStart(req, slug, _))
 
-  private def getAuthFedCallback(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] =
+  private def getAuthFedCallback(req: Request[IO], slug: String): IO[Response[IO]] =
     fedCallback(req, slug)
 
-  private def getAuthRequest(
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAuthRequest(id: UUID): IO[Response[IO]] =
     login.requestDto(id).flatMap(_.fold(err(ErrorCode.LoginRequestExpired))(Ok(_)))
 
-  private def postAuthRequestSelect(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAuthRequestSelect(req: Request[IO], id: UUID): IO[Response[IO]] =
     csrf(req)(body[SwitchReq](req) { r =>
       auth.browser(req).flatMap {
         case None => err(ErrorCode.NotLoggedIn)
@@ -232,9 +178,7 @@ final class LoginRoutes(
       }
     })
 
-  private def postConsent(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postConsent(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[ConsentReq](req) { r =>
       auth.activeFor(req).flatMap {
         case None => err(ErrorCode.NotLoggedIn)
@@ -245,10 +189,7 @@ final class LoginRoutes(
               val scopes =
                 ar.params.hcursor.get[String]("scope").toOption.toList.flatMap(_.split(' ').filter(_.nonEmpty))
               (ctx(req), apps.find(ar.appId)).flatMapN {
-                (
-                  c,
-                  app
-                ) =>
+                (c, app) =>
                   val target = Some(("application", ar.appId.toString, app.map(_.slug).getOrElse("")))
                   (if r.approve then
                      apps.putConsent(u.id, ar.appId, scopes) *> audit.log(
@@ -271,14 +212,10 @@ final class LoginRoutes(
       }
     })
 
-  private def getAccounts(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAccounts(req: Request[IO]): IO[Response[IO]] =
     auth.browser(req).flatMap(_.fold(Ok(List.empty[AccountDto]))(bs => accounts(bs).flatMap(Ok(_))))
 
-  private def postAccountsSwitch(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAccountsSwitch(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[SwitchReq](req) { r =>
       auth.browser(req).flatMap {
         case None => err(ErrorCode.NotLoggedIn)
@@ -290,9 +227,7 @@ final class LoginRoutes(
       }
     })
 
-  private def postAccountsLogout(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAccountsLogout(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[AccountLogoutReq](req) { r =>
       auth.browser(req).flatMap {
         case None => NoContent()
@@ -304,9 +239,7 @@ final class LoginRoutes(
       }
     })
 
-  private def getAvatar(
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAvatar(id: UUID): IO[Response[IO]] =
     dir.users.avatar(id).flatMap {
       case Some((bytes, ct)) => image(bytes, ct)
       case None =>
@@ -319,9 +252,7 @@ final class LoginRoutes(
         }
     }
 
-  private def getBrandLogo(
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getBrandLogo(id: UUID): IO[Response[IO]] =
     settings.logo(id).flatMap {
       case Some((bytes, ct)) =>
         image(bytes, ct).map(_.putHeaders(
@@ -331,9 +262,7 @@ final class LoginRoutes(
       case None => NotFound()
     }
 
-  private def getAppIcon(
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAppIcon(id: UUID): IO[Response[IO]] =
     apps.icon(id).flatMap {
       case Some((bytes, ct)) => image(bytes, ct)
       case None => NotFound()
@@ -345,58 +274,32 @@ final class LoginRoutes(
     ))
 
   /** ブラウザのセッションを用意して f を呼び、新しく作ったなら Cookie を付ける. */
-  private def withBrowser(
-    req: Request[IO]
-  )(
-    f: BrowserSession => IO[Response[IO]]
-  ): IO[Response[IO]] =
-    auth.ensureBrowser(req).flatMap(
-      (
-        b,
-        cookie
-      ) =>
-        f(b).map(r => cookie.filterNot(_ => r.cookies.exists(_.name == cfg.cookieName)).fold(r)(r.addCookie))
+  private def withBrowser(req: Request[IO])(f: BrowserSession => IO[Response[IO]]): IO[Response[IO]] =
+    auth.ensureBrowser(req).flatMap((b, cookie) =>
+      f(b).map(r => cookie.filterNot(_ => r.cookies.exists(_.name == cfg.cookieName)).fold(r)(r.addCookie))
     )
 
-  private def csrf(
-    req: Request[IO]
-  )(
-    f: => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def csrf(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if req.headers.get(CIString("X-Sruru")).isEmpty then err(ErrorCode.CsrfHeaderMissing) else f
 
   /** ログインが完了したら Cookie の値を新しくする. */
-  private def rotated(
-    bs: BrowserSession,
-    r: Either[AppError, FlowDto]
-  )(
-    res: Response[IO]
-  ): IO[Response[IO]] =
+  private def rotated(bs: BrowserSession, r: Either[AppError, FlowDto])(res: Response[IO]): IO[Response[IO]] =
     r match {
       case Right(d) if d.stage == "done" => auth.rotate(bs).map(res.addCookie)
       case _ => IO.pure(res)
     }
 
-  private def flowJson(
-    bs: BrowserSession
-  )(
-    r: Res[FlowDto]
-  ): IO[Response[IO]] =
+  private def flowJson(bs: BrowserSession)(r: Res[FlowDto]): IO[Response[IO]] =
     r.flatMap(x => okJson(IO.pure(x)).flatMap(rotated(bs, x)))
 
-  private def redirectTo(
-    path: String
-  ): IO[Response[IO]] =
+  private def redirectTo(path: String): IO[Response[IO]] =
     IO.pure(Response[IO](Status.SeeOther).putHeaders(
       Location(Uri.unsafeFromString(path)),
       "Cache-Control" -> "no-store"
     ))
 
   /** 外部での認証の結果から画面へ戻る（完了なら行き先へ、途中ならログインの画面へ）. */
-  private def afterExternal(
-    flowId: UUID,
-    r: Either[AppError, FlowDto]
-  ): IO[Response[IO]] = r match {
+  private def afterExternal(flowId: UUID, r: Either[AppError, FlowDto]): IO[Response[IO]] = r match {
     case Right(d) if d.stage == "done" => redirectTo(d.redirect.getOrElse("/"))
     case Right(_) => redirectTo(s"/login?flow=$flowId")
     case Left(f) => redirectTo(s"/login?flow=$flowId&error=" + java.net.URLEncoder.encode(f.message, "UTF-8"))
@@ -413,10 +316,7 @@ final class LoginRoutes(
       case _ => settings.delete("setup").as(None)
     }
 
-  private def setup(
-    req: Request[IO],
-    r: SetupReq
-  ): IO[Response[IO]] =
+  private def setup(req: Request[IO], r: SetupReq): IO[Response[IO]] =
     ctx(req).flatMap { c =>
       setupToken.flatMap {
         case None => err(ErrorCode.AdminAlreadyExists)
@@ -450,16 +350,10 @@ final class LoginRoutes(
 
   // ------------------------------------------------------------------ クライアント証明書
 
-  private def certLogin(
-    req: Request[IO],
-    flowId: UUID
-  ): IO[Response[IO]] =
+  private def certLogin(req: Request[IO], flowId: UUID): IO[Response[IO]] =
     withBrowser(req) { bs =>
       (ctx(req), policies.get).flatMapN {
-        (
-          c,
-          p
-        ) =>
+        (c, p) =>
           if !p.cert.enabled then afterExternal(flowId, Left(AppError(ErrorCode.CertLoginDisabled)))
           else
             auth.presentedChain(req).flatMap {
@@ -508,11 +402,7 @@ final class LoginRoutes(
 
   // ------------------------------------------------------------------ 外部の IdP
 
-  private def fedStart(
-    req: Request[IO],
-    slug: String,
-    flowId: UUID
-  ): IO[Response[IO]] =
+  private def fedStart(req: Request[IO], slug: String, flowId: UUID): IO[Response[IO]] =
     withBrowser(req) { bs =>
       Time.now.flatMap(now => sessions.flow(flowId, bs.id, now)).flatMap {
         case None => redirectTo("/login")
@@ -533,10 +423,7 @@ final class LoginRoutes(
       }
     }
 
-  private def fedCallback(
-    req: Request[IO],
-    slug: String
-  ): IO[Response[IO]] = {
+  private def fedCallback(req: Request[IO], slug: String): IO[Response[IO]] = {
     val state = req.params.getOrElse("state", "")
     val flowId = uuidParam(state.takeWhile(_ != '.'))
     flowId.fold(redirectTo("/login")) { fid =>
@@ -611,14 +498,9 @@ final class LoginRoutes(
 
   // ------------------------------------------------------------------ アカウント
 
-  private def accounts(
-    bs: BrowserSession
-  ): IO[List[AccountDto]] =
+  private def accounts(bs: BrowserSession): IO[List[AccountDto]] =
     (Time.now.flatMap(now => sessions.logins(bs.id, now)), policies.get).flatMapN {
-      (
-        ls,
-        p
-      ) =>
+      (ls, p) =>
         dir.users.findMany(ls.map(_.userId)).map { us =>
           ls.flatMap(l =>
             us.find(u => u.id == l.userId && !u.disabled).map(u =>
@@ -635,11 +517,7 @@ final class LoginRoutes(
         }
     }
 
-  private def logout(
-    c: ReqCtx,
-    bs: BrowserSession,
-    userId: Option[UUID]
-  ): IO[Unit] = {
+  private def logout(c: ReqCtx, bs: BrowserSession, userId: Option[UUID]): IO[Unit] = {
     val removed: IO[List[(UUID, UUID)]] = userId match {
       case Some(u) => sessions.removeLogin(bs.id, u).map(_.toList.map(_ -> u))
       case None => Time.now.flatMap(now => sessions.logins(bs.id, now)).flatMap(ls =>
@@ -647,10 +525,7 @@ final class LoginRoutes(
         )
     }
     removed.flatMap(_.traverse_ {
-      (
-        lid,
-        uid
-      ) =>
+      (lid, uid) =>
         dir.endLogin(uid, lid) *>
           dir.users.find(uid).flatMap(u => audit.log(c, u, "web", "logout", u.flatMap(audit.userTarget)))
     })
@@ -658,10 +533,7 @@ final class LoginRoutes(
 
   // ------------------------------------------------------------------ ルート
 
-  private def image(
-    bytes: Array[Byte],
-    ct: String
-  ): IO[Response[IO]] = {
+  private def image(bytes: Array[Byte], ct: String): IO[Response[IO]] = {
     val mt = MediaType.parse(ct).toOption.filter(_.mainType == "image").getOrElse(MediaType.image.png)
     IO.pure(Response[IO](
       Status.Ok

@@ -27,47 +27,36 @@ final case class OidcConfig(
   /** ログインを許すグループ（空ならだれでも） */
   allowedGroups: Set[String] = Set.empty)
 
-final case class Identity(
-  sub: String,
-  email: Option[String],
-  name: String,
-  groups: List[String],
-  picture: Option[String] = None)
+final case class Identity(sub: String,
+                          email: Option[String],
+                          name: String,
+                          groups: List[String],
+                          picture: Option[String] = None)
 
-final case class ProviderMetadata(
-  issuer: String,
-  authorizationEndpoint: Uri,
-  tokenEndpoint: Uri,
-  jwksUri: Option[Uri],
-  endSessionEndpoint: Option[Uri])
+final case class ProviderMetadata(issuer: String,
+                                  authorizationEndpoint: Uri,
+                                  tokenEndpoint: Uri,
+                                  jwksUri: Option[Uri],
+                                  endSessionEndpoint: Option[Uri])
 
 /** ID トークン（JWT）の読み取りと検証. */
 object IdToken {
   private val dec = Base64.getUrlDecoder
 
-  private def part(
-    jwt: String,
-    i: Int
-  ): Either[String, Json] =
+  private def part(jwt: String, i: Int): Either[String, Json] =
     jwt.split('.').lift(i).toRight("malformed id_token").flatMap { p =>
       Either.catchNonFatal(new String(dec.decode(p), StandardCharsets.UTF_8)).leftMap(_ => "invalid base64 in id_token")
         .flatMap(parse(_).leftMap(e => s"invalid json in id_token: ${e.getMessage}"))
     }
 
-  def decodeHeader(
-    jwt: String
-  ): Either[String, Json] = part(jwt, 0)
-  def decodeClaims(
-    jwt: String
-  ): Either[String, Json] = part(jwt, 1)
+  def decodeHeader(jwt: String): Either[String, Json] = part(jwt, 0)
+  def decodeClaims(jwt: String): Either[String, Json] = part(jwt, 1)
 
-  def validate(
-    claims: Json,
-    issuer: String,
-    cfg: OidcConfig,
-    expectedNonce: String,
-    now: Instant
-  ): Either[String, Identity] = {
+  def validate(claims: Json,
+               issuer: String,
+               cfg: OidcConfig,
+               expectedNonce: String,
+               now: Instant): Either[String, Identity] = {
     val c = claims.hcursor
     for {
       iss <- c.get[String]("iss").leftMap(_ => "missing iss")
@@ -99,22 +88,15 @@ object IdToken {
 object Jws {
   private val dec = Base64.getUrlDecoder
 
-  private def bigInt(
-    s: String
-  ): BigInteger = new BigInteger(1, dec.decode(s))
+  private def bigInt(s: String): BigInteger = new BigInteger(1, dec.decode(s))
 
   /** JWK の公開鍵. */
-  def publicKey(
-    jwk: Json
-  ): Either[String, PublicKey] = {
+  def publicKey(jwk: Json): Either[String, PublicKey] = {
     val c = jwk.hcursor
     c.get[String]("kty").leftMap(_ => "jwk without kty").flatMap {
       case "RSA" =>
         (c.get[String]("n"), c.get[String]("e")).tupled.leftMap(_ => "invalid RSA jwk").flatMap {
-          (
-            n,
-            e
-          ) =>
+          (n, e) =>
             Either.catchNonFatal(KeyFactory.getInstance("RSA").generatePublic(new RSAPublicKeySpec(
               bigInt(n),
               bigInt(e)
@@ -122,11 +104,7 @@ object Jws {
         }
       case "EC" =>
         (c.get[String]("crv"), c.get[String]("x"), c.get[String]("y")).tupled.leftMap(_ => "invalid EC jwk").flatMap {
-          (
-            crv,
-            x,
-            y
-          ) =>
+          (crv, x, y) =>
             val name = crv match {
               case "P-256" => "secp256r1"
               case "P-384" => "secp384r1"
@@ -144,9 +122,7 @@ object Jws {
     }
   }
 
-  private def javaAlg(
-    alg: String
-  ): Option[String] = alg match {
+  private def javaAlg(alg: String): Option[String] = alg match {
     case "RS256" => Some("SHA256withRSA")
     case "RS384" => Some("SHA384withRSA")
     case "RS512" => Some("SHA512withRSA")
@@ -161,11 +137,7 @@ object Jws {
    * 署名を検証する. alg が none のトークンは受け付けない.
    * HS* はクライアントシークレットを鍵にする（OIDC Core 10.1）.
    */
-  def verify(
-    jwt: String,
-    jwks: List[Json],
-    clientSecret: String
-  ): Either[String, Unit] =
+  def verify(jwt: String, jwks: List[Json], clientSecret: String): Either[String, Unit] =
     jwt.split('.') match {
       case Array(h, p, s) =>
         val input = s"$h.$p".getBytes(StandardCharsets.US_ASCII)
@@ -216,16 +188,13 @@ object Jws {
 }
 
 /** ログインの結果. idToken はログアウトのとき IdP に渡す（id_token_hint）. */
-final case class LoginResult(
-  identity: Identity,
-  idToken: String)
+final case class LoginResult(identity: Identity, idToken: String)
 
 /** OIDC プロバイダ向けのクライアント（Authorization Code + PKCE + nonce. ID トークンは署名・iss・aud・exp・nonce を検証する）. */
-final class OidcClient private (
-  cfg: OidcConfig,
-  http: Client[IO],
-  meta: Ref[IO, Option[ProviderMetadata]],
-  keys: Ref[IO, List[Json]]) {
+final class OidcClient private (cfg: OidcConfig,
+                                http: Client[IO],
+                                meta: Ref[IO, Option[ProviderMetadata]],
+                                keys: Ref[IO, List[Json]]) {
 
   def config: OidcConfig = cfg
 
@@ -235,9 +204,7 @@ final class OidcClient private (
       val url = Uri.unsafeFromString(cfg.issuer.stripSuffix("/") + "/.well-known/openid-configuration")
       http.expect[Json](url).flatMap { j =>
         val c = j.hcursor
-        def uri(
-          name: String
-        ) = c.get[String](name).toOption.flatMap(s => Uri.fromString(s).toOption)
+        def uri(name: String) = c.get[String](name).toOption.flatMap(s => Uri.fromString(s).toOption)
         val res = for {
           iss <- c.get[String]("issuer").leftMap(_ => "discovery: missing issuer")
           auth <- uri("authorization_endpoint").toRight("discovery: missing authorization_endpoint")
@@ -249,19 +216,14 @@ final class OidcClient private (
       }
   }
 
-  private def fetchKeys(
-    m: ProviderMetadata
-  ): IO[List[Json]] =
+  private def fetchKeys(m: ProviderMetadata): IO[List[Json]] =
     m.jwksUri.fold(IO.pure(List.empty[Json]))(u =>
       http.expect[Json](u).map(_.hcursor.get[List[Json]]("keys").getOrElse(Nil))
     )
       .flatTap(keys.set)
 
   /** 署名を検証する. 鍵が見つからなければ JWKS を取り直してもう一度（IdP の鍵の入れ替え）. */
-  private def verifySignature(
-    m: ProviderMetadata,
-    idToken: String
-  ): IO[Unit] =
+  private def verifySignature(m: ProviderMetadata, idToken: String): IO[Unit] =
     keys.get.flatMap(ks => if ks.isEmpty then fetchKeys(m) else IO.pure(ks)).flatMap { ks =>
       Jws.verify(idToken, ks, cfg.clientSecret) match {
         case Right(_) => IO.unit
@@ -272,11 +234,7 @@ final class OidcClient private (
       }
     }
 
-  def authorizationUri(
-    state: String,
-    verifier: String,
-    nonce: String
-  ): IO[Uri] =
+  def authorizationUri(state: String, verifier: String, nonce: String): IO[Uri] =
     discover.map { m =>
       m.authorizationEndpoint.withQueryParams(
         Map(
@@ -293,12 +251,7 @@ final class OidcClient private (
     }
 
   /** 認可コードを ID トークンに交換し、検証済みの Identity を返す. */
-  def authenticate(
-    code: String,
-    verifier: String,
-    nonce: String,
-    now: Instant
-  ): IO[LoginResult] =
+  def authenticate(code: String, verifier: String, nonce: String, now: Instant): IO[LoginResult] =
     for {
       m <- discover
       req = Request[IO](Method.POST, m.tokenEndpoint).withEntity(
@@ -323,10 +276,7 @@ final class OidcClient private (
     } yield LoginResult(id, idToken)
 
   /** IdP からもログアウトする URL（end_session_endpoint がなければ None）. */
-  def logoutUri(
-    idToken: Option[String],
-    postLogout: String
-  ): IO[Option[Uri]] =
+  def logoutUri(idToken: Option[String], postLogout: String): IO[Option[Uri]] =
     discover.attempt.map(_.toOption.flatMap(_.endSessionEndpoint).map { e =>
       e.withQueryParams(Map("post_logout_redirect_uri" -> postLogout, "client_id" -> cfg.clientId) ++
         idToken.map("id_token_hint" -> _))
@@ -334,19 +284,11 @@ final class OidcClient private (
 }
 
 object OidcClient {
-  def create(
-    cfg: OidcConfig,
-    http: Client[IO]
-  ): IO[OidcClient] =
+  def create(cfg: OidcConfig, http: Client[IO]): IO[OidcClient] =
     (Ref.of[IO, Option[ProviderMetadata]](None), Ref.of[IO, List[Json]](Nil)).mapN(new OidcClient(cfg, http, _, _))
 }
 
 private object Crypto {
-  def constantTimeEquals(
-    a: String,
-    b: String
-  ): Boolean = sruru.security.Crypto.constantTimeEquals(a, b)
-  def pkceChallenge(
-    v: String
-  ): String = sruru.security.Crypto.pkceS256(v)
+  def constantTimeEquals(a: String, b: String): Boolean = sruru.security.Crypto.constantTimeEquals(a, b)
+  def pkceChallenge(v: String): String = sruru.security.Crypto.pkceS256(v)
 }

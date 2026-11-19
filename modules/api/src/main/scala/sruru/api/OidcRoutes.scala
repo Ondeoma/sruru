@@ -18,28 +18,24 @@ import java.time.Instant
 import java.util.UUID
 
 /** OAuth 2.0 のエラー. */
-final case class OAuthError(
-  error: String,
-  description: String,
-  status: Status = Status.BadRequest)
+final case class OAuthError(error: String, description: String, status: Status = Status.BadRequest)
 
 /**
  * OpenID Connect プロバイダ・OAuth 2.0 認可サーバー.
  * 認可コード（PKCE）・リフレッシュトークン（ローテーションと再利用の検出）・クライアントクレデンシャル・
  * UserInfo・イントロスペクション（RFC 7662）・失効（RFC 7009）・RP からのログアウト・バックチャネルのログアウト.
  */
-final class OidcRoutes(
-  apps: AppStore,
-  tokens: TokenStore,
-  sessions: SessionStore,
-  dir: Directory,
-  keys: KeyService,
-  claims: Claims,
-  gate: AuthGate,
-  val auth: SessionAuth,
-  audit: AuditService,
-  http: Client[IO],
-  cfg: ApiConfig) extends RouteSupport {
+final class OidcRoutes(apps: AppStore,
+                       tokens: TokenStore,
+                       sessions: SessionStore,
+                       dir: Directory,
+                       keys: KeyService,
+                       claims: Claims,
+                       gate: AuthGate,
+                       val auth: SessionAuth,
+                       audit: AuditService,
+                       http: Client[IO],
+                       cfg: ApiConfig) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / ".well-known" / "openid-configuration" => getWellKnownOpenidConfiguration()
@@ -63,34 +59,22 @@ final class OidcRoutes(
   private def getOauth2Jwks(): IO[Response[IO]] =
     cors(keys.jwks.flatMap(j => Ok(j).map(_.putHeaders("Cache-Control" -> "public, max-age=300"))))
 
-  private def getOauth2Authorize(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getOauth2Authorize(req: Request[IO]): IO[Response[IO]] =
     authorize(req)
 
-  private def postOauth2Token(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postOauth2Token(req: Request[IO]): IO[Response[IO]] =
     cors(token(req))
 
-  private def getOauth2Userinfo(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getOauth2Userinfo(req: Request[IO]): IO[Response[IO]] =
     cors(userinfo(req))
 
-  private def postOauth2Introspect(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postOauth2Introspect(req: Request[IO]): IO[Response[IO]] =
     introspect(req)
 
-  private def postOauth2Revoke(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postOauth2Revoke(req: Request[IO]): IO[Response[IO]] =
     revoke(req)
 
-  private def getOauth2Logout(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getOauth2Logout(req: Request[IO]): IO[Response[IO]] =
     endSession(req)
 
   private def optionsOauth2(): IO[Response[IO]] =
@@ -101,55 +85,32 @@ final class OidcRoutes(
 
   // ------------------------------------------------------------------ 補助
 
-  private def oauthErr(
-    e: OAuthError
-  ): IO[Response[IO]] =
+  private def oauthErr(e: OAuthError): IO[Response[IO]] =
     IO.pure(Response[IO](e.status).withEntity(Json.obj(
       "error" -> e.error.asJson,
       "error_description" -> e.description.asJson
     ))
       .putHeaders("Cache-Control" -> "no-store", "Pragma" -> "no-cache"))
 
-  private def json(
-    j: Json
-  ): IO[Response[IO]] = Ok(j).map(_.putHeaders("Cache-Control" -> "no-store", "Pragma" -> "no-cache"))
+  private def json(j: Json): IO[Response[IO]] =
+    Ok(j).map(_.putHeaders("Cache-Control" -> "no-store", "Pragma" -> "no-cache"))
 
   /** クライアントへ結果を返す（query か form_post）. */
-  private def toClient(
-    redirectUri: String,
-    mode: String,
-    params: List[(String, String)]
-  ): IO[Response[IO]] =
+  private def toClient(redirectUri: String, mode: String, params: List[(String, String)]): IO[Response[IO]] =
     if mode == "form_post" then formPage(redirectUri, params, None)
     else {
       val base = Uri.unsafeFromString(redirectUri)
       IO.pure(Response[IO](Status.SeeOther).putHeaders(
-        Location(params.foldLeft(base)(
-          (
-            u,
-            kv
-          ) => u.withQueryParam(kv._1, kv._2)
-        )),
+        Location(params.foldLeft(base)((u, kv) => u.withQueryParam(kv._1, kv._2))),
         "Cache-Control" -> "no-store"
       ))
     }
 
   /** POST するフォームの画面. question がなければすぐに送信し、あれば問いとボタンを見せる. */
-  private def formPage(
-    action: String,
-    params: List[(String, String)],
-    question: Option[String]
-  ): IO[Response[IO]] = {
+  private def formPage(action: String, params: List[(String, String)], question: Option[String]): IO[Response[IO]] = {
     val nonce = Crypto.randomToken(12)
-    def esc(
-      s: String
-    ) = Html.escape(s)
-    val inputs = params.map(
-      (
-        k,
-        v
-      ) => s"""<input type="hidden" name="${esc(k)}" value="${esc(v)}">"""
-    ).mkString
+    def esc(s: String) = Html.escape(s)
+    val inputs = params.map((k, v) => s"""<input type="hidden" name="${esc(k)}" value="${esc(v)}">""").mkString
     val body = question match {
       case None => s"""<form method="post" action="${esc(
                        action
@@ -165,28 +126,20 @@ final class OidcRoutes(
     IO.pure(Html.response(html, s"default-src 'none'; script-src 'nonce-$nonce'; form-action *"))
   }
 
-  private def params(
-    req: Request[IO]
-  ): IO[Map[String, String]] =
+  private def params(req: Request[IO]): IO[Map[String, String]] =
     // POST は本文だけを使う（クライアントのシークレットやトークンを URL に載せさせない）
     if req.method == Method.POST then
       req.as[UrlForm].map(f => f.values.collect { case (k, v) if v.nonEmpty => k -> v.toList.head })
     else IO.pure(req.params)
 
   /** クライアントの認証（client_secret_basic・client_secret_post・公開クライアント）. */
-  private def clientAuth(
-    req: Request[IO],
-    form: Map[String, String]
-  ): IO[Either[OAuthError, (Application, OidcClientConfig)]] = {
+  private def clientAuth(req: Request[IO],
+                         form: Map[String, String]): IO[Either[OAuthError, (Application, OidcClientConfig)]] = {
     val basic = req.headers.get[Authorization].collect { case Authorization(BasicCredentials(u, p)) =>
       (URLDecoder.decode(u, StandardCharsets.UTF_8), URLDecoder.decode(p, StandardCharsets.UTF_8))
     }
-    val (id, secret) = basic.map(
-      (
-        u,
-        p
-      ) => (Some(u), Some(p))
-    ).getOrElse((form.get("client_id"), form.get("client_secret")))
+    val (id, secret) =
+      basic.map((u, p) => (Some(u), Some(p))).getOrElse((form.get("client_id"), form.get("client_secret")))
     id match {
       case None => IO.pure(Left(OAuthError("invalid_client", "client_id がありません", Status.Unauthorized)))
       case Some(cid) =>
@@ -262,9 +215,7 @@ final class OidcRoutes(
 
   // ------------------------------------------------------------------ 認可
 
-  private def authorize(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def authorize(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { p =>
       p.get("client_id").fold(gate.errorPage("client_id がありません"))(cid =>
         apps.byClientId(cid).flatMap {
@@ -278,10 +229,8 @@ final class OidcRoutes(
               case Some(ru) =>
                 val mode = p.get("response_mode").filter(_ == "form_post").getOrElse("query")
                 val state = p.get("state").toList.map("state" -> _)
-                def back(
-                  e: String,
-                  d: String
-                ) = toClient(ru, mode, List("error" -> e, "error_description" -> d, "iss" -> iss) ++ state)
+                def back(e: String, d: String) =
+                  toClient(ru, mode, List("error" -> e, "error_description" -> d, "iss" -> iss) ++ state)
                 val requested = p.getOrElse("scope", "").split(' ').filter(_.nonEmpty).toList.distinct
                 val scopes = requested.filter(c.scopes.contains)
                 if !app.enabled then back("access_denied", "このアプリケーションは無効です")
@@ -306,12 +255,7 @@ final class OidcRoutes(
                     "login_hint",
                     "acr_values",
                     "ui_locales"
-                  ).contains).toList.map(
-                    (
-                      k,
-                      v
-                    ) => k -> v.asJson
-                  ) ++
+                  ).contains).toList.map((k, v) => k -> v.asJson) ++
                     List(
                       "redirect_uri" -> ru.asJson,
                       "response_mode" -> mode.asJson,
@@ -327,14 +271,9 @@ final class OidcRoutes(
     }
 
   /** ログイン・同意の後に、認可コードを発行してクライアントへ戻す. */
-  def resume(
-    req: Request[IO],
-    r: AuthRequest
-  ): IO[Response[IO]] = {
+  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = {
     val pc = r.params.hcursor
-    def str(
-      k: String
-    ) = pc.get[String](k).toOption
+    def str(k: String) = pc.get[String](k).toOption
     (apps.find(r.appId), apps.oidc(r.appId)).tupled.flatMap {
       case (Some(app), Some(c)) =>
         val ru = str("redirect_uri").get
@@ -342,10 +281,7 @@ final class OidcRoutes(
         val state = str("state").toList.map("state" -> _)
         val prompt = str("prompt").toList.flatMap(_.split(' ')).toSet
         val scopes = str("scope").toList.flatMap(_.split(' ').filter(_.nonEmpty))
-        def back(
-          e: String,
-          d: String
-        ) = tokens.deleteRequest(r.id) *>
+        def back(e: String, d: String) = tokens.deleteRequest(r.id) *>
           toClient(ru, mode, List("error" -> e, "error_description" -> d, "iss" -> iss) ++ state)
         // prompt=login は、要求を受けた後にログインしていれば満たす（AuthGate が認証の時刻で判定する）
         val opts =
@@ -405,15 +341,13 @@ final class OidcRoutes(
 
   // ------------------------------------------------------------------ トークン
 
-  private def accessToken(
-    app: Option[Application],
-    c: OidcClientConfig,
-    sub: String,
-    userId: Option[UUID],
-    loginId: Option[UUID],
-    scopes: List[String],
-    now: Instant
-  ): IO[(String, Int)] = {
+  private def accessToken(app: Option[Application],
+                          c: OidcClientConfig,
+                          sub: String,
+                          userId: Option[UUID],
+                          loginId: Option[UUID],
+                          scopes: List[String],
+                          now: Instant): IO[(String, Int)] = {
     val jti = UUID.randomUUID()
     val exp = now.plusSeconds(c.accessTokenTtl.toLong)
     keys.active(c.signingAlg).flatMap { k =>
@@ -439,35 +373,27 @@ final class OidcRoutes(
     }
   }
 
-  private def atHash(
-    at: String,
-    alg: String
-  ): String = {
+  private def atHash(at: String, alg: String): String = {
     val d = java.security.MessageDigest.getInstance("SHA-256").digest(at.getBytes(StandardCharsets.US_ASCII))
     Crypto.b64url.encodeToString(d.take(d.length / 2))
   }
 
   /** 発行したトークンを数える（protocol = oidc（ID トークンあり）・oauth2）. */
-  private def issued(
-    grant: String,
-    protocol: String
-  ): IO[Unit] =
+  private def issued(grant: String, protocol: String): IO[Unit] =
     sbirds.observe.Metrics.count("sruru.tokens.issued", "grant_type" -> grant, "protocol" -> protocol)
 
   /** ユーザーに対するトークン一式（アクセストークン・ID トークン・リフレッシュトークン）. */
-  private def issue(
-    grant: String,
-    app: Application,
-    c: OidcClientConfig,
-    u: User,
-    loginId: Option[UUID],
-    scopes: List[String],
-    authTime: Instant,
-    amr: List[String],
-    nonce: Option[String],
-    family: Option[UUID],
-    now: Instant
-  ): IO[Json] =
+  private def issue(grant: String,
+                    app: Application,
+                    c: OidcClientConfig,
+                    u: User,
+                    loginId: Option[UUID],
+                    scopes: List[String],
+                    authTime: Instant,
+                    amr: List[String],
+                    nonce: Option[String],
+                    family: Option[UUID],
+                    now: Instant): IO[Json] =
     for {
       m <- dir.membership(u)
       sub = claims.sub(u, c)
@@ -476,10 +402,7 @@ final class OidcRoutes(
       idToken <- if !scopes.contains("openid") then IO.pure(None)
       else
         (claims.build(u, m, app, c, scopes.toSet), keys.active(c.signingAlg)).mapN {
-          (
-            cl,
-            k
-          ) =>
+          (cl, k) =>
             Some(Jose.sign(
               k,
               cl.deepMerge(Json.obj(
@@ -522,38 +445,23 @@ final class OidcRoutes(
     ).dropNullValues
 
   /** アプリを使い続けてよいか（無効化・グループからの除外を反映する）. */
-  private def stillAllowed(
-    app: Application,
-    u: User
-  ): IO[Boolean] =
+  private def stillAllowed(app: Application, u: User): IO[Boolean] =
     if u.disabled || !app.enabled then IO.pure(false)
     else if !app.restrictAccess then IO.pure(true)
     else
-      (apps.accessGroups(app.id), dir.membership(u)).mapN(
-        (
-          gs,
-          m
-        ) => gs.exists(m.ids.contains)
-      )
+      (apps.accessGroups(app.id), dir.membership(u)).mapN((gs, m) => gs.exists(m.ids.contains))
 
   /** ログインに結び付いたトークンなら、そのログインが続いているか（期限切れ・無操作で終わったログインのトークンは使わせない）. */
-  private def loginAlive(
-    loginId: Option[UUID],
-    now: Instant
-  ): IO[Boolean] =
+  private def loginAlive(loginId: Option[UUID], now: Instant): IO[Boolean] =
     loginId.fold(IO.pure(true))(id => sessions.login(id).map(_.exists(_.expiresAt.isAfter(now))))
 
   /** 認可コードから発行するリフレッシュトークンの系列（コードの再利用のとき、その系列をまとめて失効させる）. */
-  private def codeFamily(
-    code: String
-  ): UUID = UUID.nameUUIDFromBytes(Crypto.sha256("sruru-code-family:" + code))
+  private def codeFamily(code: String): UUID = UUID.nameUUIDFromBytes(Crypto.sha256("sruru-code-family:" + code))
 
   private val Grants = Set("authorization_code", "refresh_token", "client_credentials")
 
   /** トークンのエンドポイント. スパン・メトリクスには grant_type と結果だけを載せる（コード・トークン・クライアントシークレットは載せない）. */
-  private def token(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def token(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
       val grant = f.getOrElse("grant_type", "")
       val label = if Grants(grant) then grant else "other"
@@ -566,11 +474,7 @@ final class OidcRoutes(
       )
     }
 
-  private def tokenFor(
-    req: Request[IO],
-    f: Map[String, String],
-    grant: String
-  ): IO[Response[IO]] =
+  private def tokenFor(req: Request[IO], f: Map[String, String], grant: String): IO[Response[IO]] =
     clientAuth(req, f).flatMap {
       case Left(e) => oauthErr(e)
       case Right((app, c)) =>
@@ -665,17 +569,13 @@ final class OidcRoutes(
                   val scopes = requested.filter(s => c.scopes.contains(s) && !Set("openid", "offline_access")(s))
                   accessToken(Some(app), c, c.clientId, None, None, scopes, now).flatTap(_ =>
                     issued("client_credentials", "oauth2")
-                  ).flatMap(
-                    (
-                      at,
-                      ttl
-                    ) =>
-                      json(Json.obj(
-                        "access_token" -> at.asJson,
-                        "token_type" -> "Bearer".asJson,
-                        "expires_in" -> ttl.asJson,
-                        "scope" -> scopes.mkString(" ").asJson
-                      ))
+                  ).flatMap((at, ttl) =>
+                    json(Json.obj(
+                      "access_token" -> at.asJson,
+                      "token_type" -> "Bearer".asJson,
+                      "expires_in" -> ttl.asJson,
+                      "scope" -> scopes.mkString(" ").asJson
+                    ))
                   )
                 }
               case _ => oauthErr(OAuthError("unsupported_grant_type", s"$grant は使えません"))
@@ -686,9 +586,7 @@ final class OidcRoutes(
   // ------------------------------------------------------------------ アクセストークンの検証
 
   /** 自分が発行したアクセストークン（署名・期限・失効を確かめる）. */
-  def verifyAccess(
-    at: String
-  ): IO[Option[(Json, AccessTokenRow)]] =
+  def verifyAccess(at: String): IO[Option[(Json, AccessTokenRow)]] =
     keys.publicJwks.flatMap { ks =>
       val ok = for {
         h <- Jose.header(at).toOption
@@ -698,34 +596,21 @@ final class OidcRoutes(
         jti <- cl.hcursor.get[String]("jti").toOption.flatMap(s => scala.util.Try(UUID.fromString(s)).toOption)
       } yield (cl, jti)
       ok.fold(IO.pure(None)) {
-        (
-          cl,
-          jti
-        ) =>
-          (tokens.access(jti), Time.now).mapN(
-            (
-              row,
-              now
-            ) => row.filter(r => r.revokedAt.isEmpty && r.expiresAt.isAfter(now)).map(cl -> _)
+        (cl, jti) =>
+          (tokens.access(jti), Time.now).mapN((row, now) =>
+            row.filter(r => r.revokedAt.isEmpty && r.expiresAt.isAfter(now)).map(cl -> _)
           )
       }
     }
 
-  private def bearer(
-    req: Request[IO],
-    form: Map[String, String]
-  ): Option[String] =
+  private def bearer(req: Request[IO], form: Map[String, String]): Option[String] =
     req.headers.get[Authorization].collect { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }.orElse(
       form.get("access_token").filter(_ => req.method == Method.POST)
     )
 
-  private def userinfo(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def userinfo(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
-      def unauthorized(
-        e: String
-      ) =
+      def unauthorized(e: String) =
         IO.pure(Response[IO](Status.Unauthorized).putHeaders(
           "WWW-Authenticate" -> s"""Bearer error="$e"""",
           "Cache-Control" -> "no-store"
@@ -754,9 +639,7 @@ final class OidcRoutes(
       )
     }
 
-  private def introspect(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def introspect(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
       clientAuth(req, f).flatMap {
         case Left(e) => oauthErr(e)
@@ -769,10 +652,7 @@ final class OidcRoutes(
                   // ユーザーのトークンは、ユーザー・アプリ・グループの今の状態で判定する（クライアントクレデンシャルはアプリの有効だけ）
                   u.fold(IO.pure(row.userId.isEmpty && app.enabled))(stillAllowed(app, _)).map(ok => (u, ok))
                 }.flatMap {
-                  (
-                    u,
-                    ok
-                  ) =>
+                  (u, ok) =>
                     if !ok then inactive
                     else
                       json(Json.obj(
@@ -816,9 +696,7 @@ final class OidcRoutes(
       }
     }
 
-  private def revoke(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def revoke(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
       clientAuth(req, f).flatMap {
         case Left(e) => oauthErr(e)
@@ -838,9 +716,7 @@ final class OidcRoutes(
 
   // ------------------------------------------------------------------ ログアウト
 
-  private def endSession(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def endSession(req: Request[IO]): IO[Response[IO]] =
     params(req).flatMap { f =>
       for {
         ks <- keys.publicJwks
@@ -866,10 +742,7 @@ final class OidcRoutes(
           else {
             val target = byHint.orElse(active.map(a => (a._1, a._3.id)))
             target.traverse_ {
-              (
-                bs,
-                uid
-              ) =>
+              (bs, uid) =>
                 sessions.removeLogin(bs.id, uid).flatMap(_.traverse_ { lid =>
                   dir.endLogin(uid, lid) *> dir.users.find(uid).flatMap(_.traverse_ { u =>
                     audit.log(
@@ -893,9 +766,7 @@ final class OidcRoutes(
 
   // ------------------------------------------------------------------ ルート
 
-  private def cors(
-    r: IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def cors(r: IO[Response[IO]]): IO[Response[IO]] =
     r.map(_.putHeaders(
       "Access-Control-Allow-Origin" -> "*",
       "Access-Control-Allow-Headers" -> "Authorization, Content-Type"
@@ -904,9 +775,7 @@ final class OidcRoutes(
 }
 
 object OidcRoutes {
-  private def origin(
-    u: String
-  ): Option[String] =
+  private def origin(u: String): Option[String] =
     scala.util.Try(java.net.URI.create(u)).toOption.filter(x =>
       x.getScheme != null && x.getHost != null && x.getUserInfo == null
     )
@@ -915,9 +784,6 @@ object OidcRoutes {
       )
 
   /** ログアウト後に戻してよい URI: 登録したもの、または登録したリダイレクト URI と同じオリジンの URL（各サービスの「/」を個別に登録しなくてよいように）. */
-  def allowedPostLogout(
-    c: OidcClientConfig,
-    u: String
-  ): Boolean =
+  def allowedPostLogout(c: OidcClientConfig, u: String): Boolean =
     c.postLogoutRedirectUris.contains(u) || origin(u).exists(o => c.redirectUris.flatMap(origin).contains(o))
 }

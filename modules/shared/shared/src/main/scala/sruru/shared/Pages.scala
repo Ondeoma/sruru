@@ -10,15 +10,8 @@ object Pages {
   /** ログインしていなくても開く画面（ヘッダーを出さない. 画面のブラウザの観測（RUM）も読まない）. */
   val public: List[String] = "/verify-email" :: login
 
-  private def under(
-    path: String,
-    ps: List[String]
-  ): Boolean = ps.exists(x => path == x || path.startsWith(x + "/"))
+  private def under(path: String, ps: List[String]): Boolean = ps.exists(x => path == x || path.startsWith(x + "/"))
 
-  def isLogin(
-    path: String
-  ): Boolean = under(path, login)
-  def isPublic(
-    path: String
-  ): Boolean = under(path, public)
+  def isLogin(path: String): Boolean = under(path, login)
+  def isPublic(path: String): Boolean = under(path, public)
 }

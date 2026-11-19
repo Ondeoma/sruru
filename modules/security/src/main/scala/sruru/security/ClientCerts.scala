@@ -10,30 +10,25 @@ import javax.naming.ldap.LdapName
 import scala.jdk.CollectionConverters.*
 
 /** クライアント証明書の検証と、ユーザーとの対応付けに使う値. */
-final case class CertInfo(
-  fingerprint: String,
-  subject: String,
-  issuer: String,
-  notAfter: Instant,
-  cn: Option[String],
-  emails: List[String],
-  upns: List[String])
+final case class CertInfo(fingerprint: String,
+                          subject: String,
+                          issuer: String,
+                          notAfter: Instant,
+                          cn: Option[String],
+                          emails: List[String],
+                          upns: List[String])
 
 object ClientCerts {
 
   private val UpnOid = "1.3.6.1.4.1.311.20.2.3"
 
-  def fingerprint(
-    c: X509Certificate
-  ): String = Crypto.hex(Crypto.sha256(c.getEncoded))
+  def fingerprint(c: X509Certificate): String = Crypto.hex(Crypto.sha256(c.getEncoded))
 
   /**
    * リバースプロキシが渡すヘッダーの値（PEM. nginx の $ssl_client_escaped_cert のように URL エンコードされていてもよい.
    * 改行がスペースになっている形も受け付ける）.
    */
-  def fromHeader(
-    v: String
-  ): Either[String, X509Certificate] = {
+  def fromHeader(v: String): Either[String, X509Certificate] = {
     val decoded = if v.contains("%") then URLDecoder.decode(v, StandardCharsets.UTF_8) else v
     val body =
       decoded.replace("-----BEGIN CERTIFICATE-----", "").replace("-----END CERTIFICATE-----", "").replaceAll("\\s+", "")
@@ -41,9 +36,7 @@ object ClientCerts {
     Jose.parseCerts(pem).map(_.head)
   }
 
-  def info(
-    c: X509Certificate
-  ): CertInfo = {
+  def info(c: X509Certificate): CertInfo = {
     val sans = Option(c.getSubjectAlternativeNames).map(_.asScala.toList.map(_.asScala.toList)).getOrElse(Nil)
     val emails = sans.collect { case (t: Integer) :: (v: String) :: Nil if t.intValue == 1 => v.toLowerCase }
     // otherName（UPN）は DER のまま返るので、UTF8String を取り出す
@@ -68,9 +61,7 @@ object ClientCerts {
     )
   }
 
-  private def otherNameUpn(
-    der: Array[Byte]
-  ): Option[String] =
+  private def otherNameUpn(der: Array[Byte]): Option[String] =
     scala.util.Try {
       import org.bouncycastle.asn1.*
       val seq = ASN1Sequence.getInstance(ASN1Primitive.fromByteArray(der))
@@ -84,11 +75,9 @@ object ClientCerts {
     }.toOption.flatten
 
   /** 信頼する CA から証明書のチェーンを検証する（失効の確認はしない. 期限・署名・用途を確かめる）. */
-  def validate(
-    chain: List[X509Certificate],
-    cas: List[X509Certificate],
-    now: Instant
-  ): Either[String, X509Certificate] =
+  def validate(chain: List[X509Certificate],
+               cas: List[X509Certificate],
+               now: Instant): Either[String, X509Certificate] =
     chain.headOption.toRight("証明書がありません").flatMap { leaf =>
       if cas.isEmpty then Left("信頼する認証局が登録されていません")
       else

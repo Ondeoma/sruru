@@ -17,10 +17,7 @@ import java.util.UUID
 
 /** OAUTH_CLIENTS の読み込み（DB は使わない）. */
 class OAuthClientSpec extends munit.FunSuite {
-  private def one(
-    scopes: String,
-    secret: String = "skakapo-secret-0123456789"
-  ) =
+  private def one(scopes: String, secret: String = "skakapo-secret-0123456789") =
     s"""[{"id":"skakapo","secret":"$secret","redirectUri":"http://localhost:5199/api/connections/callback","name":"skakapo","scopes":$scopes}]"""
 
   test("read だけを許したクライアントを読める（scopes を省くと read）") {
@@ -73,8 +70,7 @@ class OAuthSpec extends CatsEffectSuite {
   )
 
   /** Main と同じ組み立て（外部への HTTP は使わない）. */
-  private final class Env(
-    xa: doobie.Transactor[IO]) {
+  private final class Env(xa: doobie.Transactor[IO]) {
     private val http = Client.fromHttpApp[IO](HttpApp.notFound)
     private val box = new SecretBox("sruru-test-secret-0123456789")
     val users = new UserStore(xa)
@@ -166,19 +162,11 @@ class OAuthSpec extends CatsEffectSuite {
       } yield (u, RequestCookie(cfg.cookieName, t))
   }
 
-  private def withDb(
-    name: String
-  )(
-    body: Env => IO[Unit]
-  ): Unit =
+  private def withDb(name: String)(body: Env => IO[Unit]): Unit =
     test(name)(if dbCfg.isEmpty then IO(assume(false, "TEST_DATABASE_URL が未設定")) else body(Env(xaFixture())))
 
   private val verifier = "verifier-0123456789-0123456789-0123456789-abcdef"
-  private def authzQuery(
-    clientId: String = "skakapo",
-    redirect: String = Redirect,
-    scope: String = "read"
-  ) =
+  private def authzQuery(clientId: String = "skakapo", redirect: String = Redirect, scope: String = "read") =
     Uri.unsafeFromString("/oauth/authorize").withQueryParams(Map(
       "client_id" -> clientId,
       "redirect_uri" -> redirect,
@@ -189,19 +177,12 @@ class OAuthSpec extends CatsEffectSuite {
       "scope" -> scope
     ))
 
-  private def location(
-    r: Response[IO]
-  ): Uri = r.headers.get[Location].get.uri
+  private def location(r: Response[IO]): Uri = r.headers.get[Location].get.uri
   private val basic = Authorization(BasicCredentials("skakapo", Secret))
-  private def bearer(
-    t: String
-  ) = Authorization(Credentials.Token(AuthScheme.Bearer, t))
+  private def bearer(t: String) = Authorization(Credentials.Token(AuthScheme.Bearer, t))
 
   /** 許可の画面を開いて「許可する」を押し、認可コードを受け取る. */
-  private def authorize(
-    app: HttpApp[IO],
-    ck: RequestCookie
-  ): IO[String] =
+  private def authorize(app: HttpApp[IO], ck: RequestCookie): IO[String] =
     for {
       page <- app.run(Request[IO](Method.GET, authzQuery()).putHeaders(Cookie(ck)))
       _ = assertEquals(page.status, Status.Ok)
@@ -219,20 +200,12 @@ class OAuthSpec extends CatsEffectSuite {
       _ = assertEquals(loc.params.get("state"), Some("st"))
     } yield loc.params("code")
 
-  private def token(
-    app: HttpApp[IO],
-    form: (String, String)*
-  ): IO[(Status, Json)] =
+  private def token(app: HttpApp[IO], form: (String, String)*): IO[(Status, Json)] =
     app.run(Request[IO](Method.POST, uri"/oauth/token").withEntity(UrlForm(form*)).putHeaders(basic)).flatMap(r =>
       r.as[Json].map(r.status -> _)
     )
 
-  private def rpc(
-    app: HttpApp[IO],
-    at: String,
-    method: String,
-    params: Json = Json.obj()
-  ): IO[(Status, Json)] =
+  private def rpc(app: HttpApp[IO], at: String, method: String, params: Json = Json.obj()): IO[(Status, Json)] =
     app.run(Request[IO](Method.POST, uri"/mcp").withEntity(Json.obj(
       "jsonrpc" -> "2.0".asJson,
       "id" -> 1.asJson,
@@ -242,9 +215,7 @@ class OAuthSpec extends CatsEffectSuite {
       (if r.status == Status.Ok then r.as[Json] else IO.pure(Json.Null)).map(r.status -> _)
     )
 
-  private def toolError(
-    j: Json
-  ): Boolean = j.hcursor.downField("result").get[Boolean]("isError").getOrElse(true)
+  private def toolError(j: Json): Boolean = j.hcursor.downField("result").get[Boolean]("isError").getOrElse(true)
 
   withDb("未ログインはログインへ 302、知らない client・違う redirect_uri は 400、write は invalid_scope") { env =>
     for {

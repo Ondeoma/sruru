@@ -6,30 +6,21 @@ import io.circe.syntax.*
 
 /** Google の利用者の JSON を DirUser にする. */
 private[federation] object GoogleUsers {
-  private def pick(
-    arr: List[Json],
-    pred: HCursor => Boolean = _ => true
-  ): Option[HCursor] = {
+  private def pick(arr: List[Json], pred: HCursor => Boolean = _ => true): Option[HCursor] = {
     val cs = arr.map(_.hcursor).filter(pred)
     cs.find(_.get[Boolean]("primary").toOption.contains(true)).orElse(cs.headOption)
   }
 
-  def toUser(
-    j: Json
-  ): Option[DirUser] = {
+  def toUser(j: Json): Option[DirUser] = {
     val c = j.hcursor
     for {
       id <- Dir.str(c, "id")
       email <- Dir.str(c, "primaryEmail")
     } yield {
       val n = c.downField("name")
-      def ns(
-        k: String
-      ) = n.get[String](k).toOption.filter(_.nonEmpty)
+      def ns(k: String) = n.get[String](k).toOption.filter(_.nonEmpty)
       val org = pick(Dir.list(j, "organizations"))
-      def os(
-        k: String
-      ) = org.flatMap(Dir.str(_, k)).map(_.asJson)
+      def os(k: String) = org.flatMap(Dir.str(_, k)).map(_.asJson)
       val empId =
         pick(Dir.list(j, "externalIds"), x => Dir.str(x, "type").contains("organization")).flatMap(Dir.str(_, "value"))
       val phone = pick(Dir.list(j, "phones"), x => Dir.str(x, "type").exists(t => t == "work" || t == "mobile"))

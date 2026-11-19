@@ -14,23 +14,12 @@ import java.util.UUID
 import scala.concurrent.duration.*
 
 /** バックチャネルのログアウト（OpenID Connect Back-Channel Logout 1.0）. 失敗しても止めない（別のファイバーで送る）. */
-final class LogoutNotifier(
-  apps: AppStore,
-  tokens: TokenStore,
-  keys: KeyService,
-  http: Client[IO],
-  cfg: ApiConfig) {
+final class LogoutNotifier(apps: AppStore, tokens: TokenStore, keys: KeyService, http: Client[IO], cfg: ApiConfig) {
 
   /** そのログイン（None ならそのユーザー）にトークンを出したアプリへ送る. */
-  def send(
-    u: User,
-    loginId: Option[UUID]
-  ): IO[Unit] =
-    (apps.allOidc, tokens.appsWithTokens(u.id, loginId)).mapN(
-      (
-        cs,
-        used
-      ) => cs.filter(c => used(c.appId) && c.backchannelLogoutUri.isDefined)
+  def send(u: User, loginId: Option[UUID]): IO[Unit] =
+    (apps.allOidc, tokens.appsWithTokens(u.id, loginId)).mapN((cs, used) =>
+      cs.filter(c => used(c.appId) && c.backchannelLogoutUri.isDefined)
     )
       .flatMap(_.traverse_ { c =>
         (apps.find(c.appId), Time.now).tupled.flatMap {

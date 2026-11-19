@@ -10,52 +10,44 @@ import sruru.security.{Crypto, Jose}
 import java.time.Instant
 
 /** 外部の OIDC プロバイダの設定. subjectClaim は利用者を識別するクレーム（Entra は oid）. */
-final case class UpstreamConfig(
-  issuer: String,
-  clientId: String,
-  clientSecret: String,
-  redirectUri: String,
-  scopes: List[String],
-  subjectClaim: String = "sub",
-  extraAuthParams: Map[String, String] = Map.empty)
+final case class UpstreamConfig(issuer: String,
+                                clientId: String,
+                                clientSecret: String,
+                                redirectUri: String,
+                                scopes: List[String],
+                                subjectClaim: String = "sub",
+                                extraAuthParams: Map[String, String] = Map.empty)
 
 /** 外部の IdP で確認できた利用者. claims は ID トークン（と userinfo）のクレーム全体. */
-final case class UpstreamIdentity(
-  subject: String,
-  email: Option[String],
-  emailVerified: Boolean,
-  name: Option[String],
-  givenName: Option[String],
-  familyName: Option[String],
-  picture: Option[String],
-  groups: List[String],
-  amr: List[String],
-  hostedDomain: Option[String],
-  tenantId: Option[String],
-  claims: Json)
+final case class UpstreamIdentity(subject: String,
+                                  email: Option[String],
+                                  emailVerified: Boolean,
+                                  name: Option[String],
+                                  givenName: Option[String],
+                                  familyName: Option[String],
+                                  picture: Option[String],
+                                  groups: List[String],
+                                  amr: List[String],
+                                  hostedDomain: Option[String],
+                                  tenantId: Option[String],
+                                  claims: Json)
 
 /** discovery で得た外部の IdP の情報. issuer は Entra のマルチテナントでは {tenantid} を含む. */
-final case class UpstreamMetadata(
-  issuer: String,
-  authorizationEndpoint: Uri,
-  tokenEndpoint: Uri,
-  jwksUri: Uri,
-  userinfoEndpoint: Option[Uri])
+final case class UpstreamMetadata(issuer: String,
+                                  authorizationEndpoint: Uri,
+                                  tokenEndpoint: Uri,
+                                  jwksUri: Uri,
+                                  userinfoEndpoint: Option[Uri])
 
 /** 外部の OIDC プロバイダでのログイン（Authorization Code + PKCE + nonce. ID トークンは JWKS で署名を検証）. */
-final class UpstreamOidc(
-  http: Client[IO]) {
+final class UpstreamOidc(http: Client[IO]) {
   private val metas = Ref.unsafe[IO, Map[String, UpstreamMetadata]](Map.empty)
   private val jwks = Ref.unsafe[IO, Map[String, List[Json]]](Map.empty)
 
-  private def err(
-    msg: String
-  ) = new FederationError(msg)
+  private def err(msg: String) = new FederationError(msg)
 
   /** discovery（issuer ごとに覚えておく）. */
-  def discover(
-    cfg: UpstreamConfig
-  ): IO[UpstreamMetadata] = {
+  def discover(cfg: UpstreamConfig): IO[UpstreamMetadata] = {
     val key = cfg.issuer.stripSuffix("/")
     metas.get.map(_.get(key)).flatMap {
       case Some(m) => IO.pure(m)
@@ -69,12 +61,7 @@ final class UpstreamOidc(
     }
   }
 
-  def authorizationUri(
-    cfg: UpstreamConfig,
-    state: String,
-    nonce: String,
-    verifier: String
-  ): IO[Uri] =
+  def authorizationUri(cfg: UpstreamConfig, state: String, nonce: String, verifier: String): IO[Uri] =
     discover(cfg).map { m =>
       m.authorizationEndpoint.withQueryParams(
         Map(
@@ -90,10 +77,7 @@ final class UpstreamOidc(
       )
     }
 
-  private def keys(
-    m: UpstreamMetadata,
-    refresh: Boolean
-  ): IO[List[Json]] = {
+  private def keys(m: UpstreamMetadata, refresh: Boolean): IO[List[Json]] = {
     val k = m.jwksUri.renderString
     jwks.get.map(_.get(k)).flatMap {
       case Some(ks) if !refresh => IO.pure(ks)
@@ -105,10 +89,7 @@ final class UpstreamOidc(
   }
 
   /** 署名を検証する. 鍵が見つからなければ JWKS を取り直してもう一度（IdP の鍵の入れ替え）. */
-  private def verifySignature(
-    m: UpstreamMetadata,
-    idToken: String
-  ): IO[Json] = {
+  private def verifySignature(m: UpstreamMetadata, idToken: String): IO[Json] = {
     val bad = err("ID トークンの署名を検証できません")
     keys(m, refresh = false).flatMap { ks =>
       Jose.verify(idToken, ks) match {
@@ -121,13 +102,7 @@ final class UpstreamOidc(
   }
 
   /** 認可コードをトークンに交換し、ID トークンを検証して利用者を返す. */
-  def exchange(
-    cfg: UpstreamConfig,
-    code: String,
-    verifier: String,
-    nonce: String,
-    now: Instant
-  ): IO[UpstreamIdentity] =
+  def exchange(cfg: UpstreamConfig, code: String, verifier: String, nonce: String, now: Instant): IO[UpstreamIdentity] =
     for {
       m <- discover(cfg)
       req = Request[IO](Method.POST, m.tokenEndpoint).withEntity(
@@ -149,12 +124,10 @@ final class UpstreamOidc(
     } yield id
 
   /** メールアドレスか名前が ID トークンになければ userinfo で補う（ID トークンの値が優先）. userinfo の失敗は無視する. */
-  private def withUserinfo(
-    m: UpstreamMetadata,
-    cfg: UpstreamConfig,
-    claims: Json,
-    accessToken: Option[String]
-  ): IO[Json] = {
+  private def withUserinfo(m: UpstreamMetadata,
+                           cfg: UpstreamConfig,
+                           claims: Json,
+                           accessToken: Option[String]): IO[Json] = {
     val c = claims.hcursor
     val missing = c.get[String]("email").isLeft || c.get[String]("name").isLeft
     (m.userinfoEndpoint, accessToken) match {
@@ -177,40 +150,29 @@ object UpstreamOidc {
   private val TenantTemplate = "{tenantid}"
 
   /** Entra のマルチテナント（common・organizations）. */
-  def isMultiTenant(
-    issuer: String
-  ): Boolean = issuer.contains("/common/") || issuer.contains("/organizations/")
+  def isMultiTenant(issuer: String): Boolean = issuer.contains("/common/") || issuer.contains("/organizations/")
 
   /**
    * 取りに行ってよい URL（https. 開発用に issuer が http://localhost のときだけ http://localhost も）.
    * 上流の設定で返ってきた URL で、内部のアドレスへ要求を送らされたりシークレットを送らされたりしないように.
    */
-  def safeEndpoint(
-    issuer: String,
-    u: Uri
-  ): Boolean =
+  def safeEndpoint(issuer: String, u: Uri): Boolean =
     u.scheme.contains(Uri.Scheme.https) && u.host.isDefined ||
       isLocalHttp(issuer) && u.scheme.contains(Uri.Scheme.http) && u.host.exists(h => LocalHosts(h.value.toLowerCase))
 
   private val LocalHosts = Set("localhost", "127.0.0.1", "[::1]", "::1")
 
   /** http://localhost（開発用）の issuer か. 前方一致ではなくホストで判定する（http://localhost@evil や localhost.evil を通さない）. */
-  def isLocalHttp(
-    issuer: String
-  ): Boolean =
+  def isLocalHttp(issuer: String): Boolean =
     Uri.fromString(issuer).toOption.exists(u =>
       u.scheme.contains(Uri.Scheme.http) && u.userInfo.isEmpty &&
         u.host.exists(h => LocalHosts(h.value.toLowerCase))
     )
 
-  def parseMetadata(
-    cfg: UpstreamConfig,
-    j: Json
-  ): Either[String, UpstreamMetadata] = {
+  def parseMetadata(cfg: UpstreamConfig, j: Json): Either[String, UpstreamMetadata] = {
     val c = j.hcursor
-    def uri(
-      name: String
-    ) = c.get[String](name).toOption.flatMap(s => Uri.fromString(s).toOption).filter(safeEndpoint(cfg.issuer, _))
+    def uri(name: String) =
+      c.get[String](name).toOption.flatMap(s => Uri.fromString(s).toOption).filter(safeEndpoint(cfg.issuer, _))
     for {
       iss <- c.get[String]("issuer").leftMap(_ => "OIDC の設定に issuer がありません")
       auth <- uri("authorization_endpoint").toRight("OIDC の設定に authorization_endpoint がありません")
@@ -222,19 +184,15 @@ object UpstreamOidc {
     } yield UpstreamMetadata(iss, auth, tok, jw, uri("userinfo_endpoint"))
   }
 
-  private def strings(
-    c: ACursor
-  ): List[String] =
+  private def strings(c: ACursor): List[String] =
     c.focus.toList.flatMap(j => j.asString.toList ++ j.asArray.toList.flatMap(_.flatMap(_.asString)))
 
   /** iss・aud（複数なら azp）・exp（60秒の猶予）・nonce を確かめる. */
-  def validate(
-    claims: Json,
-    metaIssuer: String,
-    cfg: UpstreamConfig,
-    nonce: String,
-    now: Instant
-  ): Either[String, Unit] = {
+  def validate(claims: Json,
+               metaIssuer: String,
+               cfg: UpstreamConfig,
+               nonce: String,
+               now: Instant): Either[String, Unit] = {
     val c = claims.hcursor
     for {
       iss <- c.get[String]("iss").leftMap(_ => "ID トークンに iss がありません")
@@ -261,14 +219,9 @@ object UpstreamOidc {
     } yield ()
   }
 
-  def identity(
-    claims: Json,
-    subjectClaim: String
-  ): Either[String, UpstreamIdentity] = {
+  def identity(claims: Json, subjectClaim: String): Either[String, UpstreamIdentity] = {
     val c = claims.hcursor
-    def str(
-      k: String
-    ) = c.get[String](k).toOption.filter(_.nonEmpty)
+    def str(k: String) = c.get[String](k).toOption.filter(_.nonEmpty)
     str(subjectClaim).toRight(s"ID トークンに $subjectClaim がありません").map { sub =>
       val verified =
         c.downField("email_verified").focus.exists(j => j.asBoolean.contains(true) || j.asString.contains("true"))
@@ -291,16 +244,11 @@ object UpstreamOidc {
 }
 
 /** よく使う IdP の既定値. */
-final case class Preset(
-  issuer: String,
-  scopes: List[String],
-  subjectClaim: String) {
-  def config(
-    clientId: String,
-    clientSecret: String,
-    redirectUri: String,
-    extraAuthParams: Map[String, String] = Map.empty
-  ): UpstreamConfig =
+final case class Preset(issuer: String, scopes: List[String], subjectClaim: String) {
+  def config(clientId: String,
+             clientSecret: String,
+             redirectUri: String,
+             extraAuthParams: Map[String, String] = Map.empty): UpstreamConfig =
     UpstreamConfig(issuer, clientId, clientSecret, redirectUri, scopes, subjectClaim, extraAuthParams)
 }
 
@@ -308,17 +256,14 @@ object Presets {
   def google: Preset = Preset("https://accounts.google.com", List("openid", "email", "profile"), "sub")
 
   /** tenant はテナント ID・ドメイン・common・organizations. */
-  def entra(
-    tenant: String
-  ): Preset = Preset(s"https://login.microsoftonline.com/$tenant/v2.0", List("openid", "profile", "email"), "oid")
+  def entra(tenant: String): Preset =
+    Preset(s"https://login.microsoftonline.com/$tenant/v2.0", List("openid", "profile", "email"), "oid")
 
   /** Google の hd（Workspace のドメインに絞る. ヒントにすぎないので ID トークンの hd も必ず確かめる）. */
-  def googleParams(
-    hostedDomain: Option[String]
-  ): Map[String, String] = hostedDomain.filter(_.nonEmpty).map("hd" -> _).toMap
+  def googleParams(hostedDomain: Option[String]): Map[String, String] =
+    hostedDomain.filter(_.nonEmpty).map("hd" -> _).toMap
 
   /** Entra のアカウントの選択画面を出す. */
-  def entraParams(
-    selectAccount: Boolean
-  ): Map[String, String] = if selectAccount then Map("prompt" -> "select_account") else Map.empty
+  def entraParams(selectAccount: Boolean): Map[String, String] =
+    if selectAccount then Map("prompt" -> "select_account") else Map.empty
 }

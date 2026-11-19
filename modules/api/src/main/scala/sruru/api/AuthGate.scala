@@ -28,29 +28,19 @@ enum Gate {
 }
 
 /** 判定の条件. */
-final case class GateOpts(
-  forceLogin: Boolean,
-  passive: Boolean,
-  maxAge: Option[Long],
-  selectAccount: Boolean)
+final case class GateOpts(forceLogin: Boolean, passive: Boolean, maxAge: Option[Long], selectAccount: Boolean)
 
 /**
  * OIDC・SAML で共通の判定: アプリの有効・IP 制限・ログイン（再認証・max_age）・アカウントの選択・利用できるグループ・多要素認証.
  */
-final class AuthGate(
-  auth: SessionAuth,
-  apps: AppStore,
-  tokens: TokenStore,
-  dir: Directory,
-  policies: PolicyService,
-  audit: AuditService) {
+final class AuthGate(auth: SessionAuth,
+                     apps: AppStore,
+                     tokens: TokenStore,
+                     dir: Directory,
+                     policies: PolicyService,
+                     audit: AuditService) {
 
-  def check(
-    req: Request[IO],
-    r: AuthRequest,
-    app: Application,
-    o: GateOpts
-  ): IO[Gate] =
+  def check(req: Request[IO], r: AuthRequest, app: Application, o: GateOpts): IO[Gate] =
     for {
       c <- auth.reqCtx(req)
       now <- Time.now
@@ -101,17 +91,13 @@ final class AuthGate(
     } yield g
 
   /** 画面のエラー表示へ. */
-  def errorPage(
-    message: String
-  ): IO[Response[IO]] =
+  def errorPage(message: String): IO[Response[IO]] =
     IO.pure(Response[IO](Status.SeeOther).putHeaders(Location(Uri.unsafeFromString("/error").withQueryParam(
       "message",
       message
     ))))
 
-  def redirect(
-    path: String
-  ): IO[Response[IO]] =
+  def redirect(path: String): IO[Response[IO]] =
     IO.pure(Response[IO](Status.SeeOther).putHeaders(
       Location(Uri.unsafeFromString(path)),
       "Cache-Control" -> "no-store"

@@ -12,16 +12,15 @@ import java.time.Instant
 import java.util.UUID
 import scala.concurrent.duration.*
 
-final case class ApiConfig(
-  publicUrl: String,
-  cookieSecure: Boolean,
-  version: String = "0.1.0",
-  cookieName: String = "sruru_session",
-  maxAvatarBytes: Int = 512 * 1024,
-  devMode: Boolean = false,
-  mailEnabled: Boolean = false,
-  nodeId: String = "node",
-  oauthClients: List[OAuthClient] = Nil) {
+final case class ApiConfig(publicUrl: String,
+                           cookieSecure: Boolean,
+                           version: String = "0.1.0",
+                           cookieName: String = "sruru_session",
+                           maxAvatarBytes: Int = 512 * 1024,
+                           devMode: Boolean = false,
+                           mailEnabled: Boolean = false,
+                           nodeId: String = "node",
+                           oauthClients: List[OAuthClient] = Nil) {
 
   /** OIDC の issuer（末尾の / なし）. */
   def issuer: String = publicUrl
@@ -29,17 +28,11 @@ final case class ApiConfig(
 
 /** サーバーで組み立てる HTML の画面. */
 object Html {
-  def escape(
-    s: String
-  ): String =
+  def escape(s: String): String =
     s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
 
   /** HTML の応答（CirceEntityCodec の import があっても JSON の文字列にしないよう、Encoder を明示する）. */
-  def response(
-    html: String,
-    csp: String,
-    status: Status = Status.Ok
-  ): Response[IO] =
+  def response(html: String, csp: String, status: Status = Status.Ok): Response[IO] =
     Response[IO](status).withEntity(html)(using EntityEncoder.stringEncoder).withContentType(headers.`Content-Type`(
       MediaType.text.html,
       Charset.`UTF-8`
@@ -51,37 +44,22 @@ object Html {
 type Res[A] = IO[Either[AppError, A]]
 
 object Res {
-  def ok[A](
-    a: A
-  ): Res[A] = IO.pure(Right(a))
-  def fail[A](
-    e: AppError
-  ): Res[A] = IO.pure(Left(e))
-  def fail[A](
-    code: ErrorCode,
-    detail: String | Null = null
-  ): Res[A] = IO.pure(Left(AppError(code, Option(detail))))
-  def fromOption[A](
-    o: Option[A],
-    f: => AppError
-  ): Either[AppError, A] = o.toRight(f)
+  def ok[A](a: A): Res[A] = IO.pure(Right(a))
+  def fail[A](e: AppError): Res[A] = IO.pure(Left(e))
+  def fail[A](code: ErrorCode, detail: String | Null = null): Res[A] = IO.pure(Left(AppError(code, Option(detail))))
+  def fromOption[A](o: Option[A], f: => AppError): Either[AppError, A] = o.toRight(f)
 }
 
 /** 直近のログイン（本人の重要な変更の前に求める）. */
 object RecentAuth {
   val Seconds = 600L
   val Message = "本人確認のため、もう一度ログインしてください"
-  def recent(
-    p: Principal,
-    now: java.time.Instant
-  ): Boolean =
+  def recent(p: Principal, now: java.time.Instant): Boolean =
     p.via.isInstanceOf[Via.Web] && p.login.exists(_.authTime.isAfter(now.minusSeconds(Seconds)))
 }
 
 /** 要求元（監査ログ・IP 制限に使う）. */
-final case class ReqCtx(
-  ip: String,
-  userAgent: Option[String])
+final case class ReqCtx(ip: String, userAgent: Option[String])
 
 object ReqCtx {
   val system: ReqCtx = ReqCtx("-", None)
@@ -105,11 +83,7 @@ enum Via {
 }
 
 /** 認証済みの利用者. isAdmin はグループによる管理者を含む. */
-final case class Principal(
-  user: User,
-  membership: Membership,
-  isAdmin: Boolean,
-  via: Via) {
+final case class Principal(user: User, membership: Membership, isAdmin: Boolean, via: Via) {
   def id: UUID = user.id
   def canRead: Boolean = via match {
     case Via.Token(_, s, _) => s.contains(TokenScopes.Read) || s.contains(TokenScopes.Write) ||
@@ -145,12 +119,6 @@ object Time {
 
 /** 定期処理（失敗しても止めない）. */
 object Loops {
-  def every(
-    initial: FiniteDuration,
-    interval: FiniteDuration,
-    code: ErrorCode
-  )(
-    action: IO[Unit]
-  ): IO[Nothing] =
+  def every(initial: FiniteDuration, interval: FiniteDuration, code: ErrorCode)(action: IO[Unit]): IO[Nothing] =
     Periodic.run(initial, interval, code)(action)
 }

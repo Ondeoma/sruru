@@ -6,19 +6,11 @@ import sruru.core.*
 
 /** 属性の値を定義に合わせて確かめる. */
 object Attrs {
-  def validate(
-    defs: List[AttributeDef],
-    attrs: Json,
-    onlyEditable: Boolean,
-    previous: Json
-  ): Either[String, Json] = {
+  def validate(defs: List[AttributeDef], attrs: Json, onlyEditable: Boolean, previous: Json): Either[String, Json] = {
     val obj = attrs.asObject.getOrElse(io.circe.JsonObject.empty)
     val byKey = defs.map(d => d.key -> d).toMap
     val checked = obj.toList.traverse {
-      (
-        k,
-        v
-      ) =>
+      (k, v) =>
         byKey.get(k) match {
           case None => Left(s"属性「$k」は定義されていません")
           case Some(d) if onlyEditable && !d.userEditable => Left(s"属性「${d.label}」は変更できません")

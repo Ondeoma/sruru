@@ -7,10 +7,9 @@ import sruru.db.*
 import java.util.UUID
 
 /** /auth/resume?req=…: ログイン・同意の画面の後に、要求の種類（OIDC・SAML）ごとの続きへ戻る. */
-final class ResumeRoutes(
-  tokens: TokenStore,
-  handlers: Map[String, (Request[IO], AuthRequest) => IO[Response[IO]]],
-  gate: AuthGate)
+final class ResumeRoutes(tokens: TokenStore,
+                         handlers: Map[String, (Request[IO], AuthRequest) => IO[Response[IO]]],
+                         gate: AuthGate)
   extends org.http4s.dsl.Http4sDsl[IO] {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {

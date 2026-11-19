@@ -96,9 +96,7 @@ final case class Branding(
 object Branding {
 
   /** ロゴの URL（なければ既定のロゴ）. */
-  def logoUrl(
-    logo: Option[String]
-  ): String = logo.fold("/logo.svg")(id => s"/brand-logos/$id")
+  def logoUrl(logo: Option[String]): String = logo.fold("/logo.svg")(id => s"/brand-logos/$id")
 }
 
 /** 監査ログ. */
@@ -107,12 +105,11 @@ final case class AuditPolicy(
   retentionDays: Int = 365) derives ConfiguredCodec
 
 /** ポリシー一式（管理画面の「ポリシー」）. */
-final case class PoliciesDto(
-  password: PasswordPolicy = PasswordPolicy(),
-  lockout: LockoutPolicy = LockoutPolicy(),
-  mfa: MfaPolicy = MfaPolicy(),
-  session: SessionPolicy = SessionPolicy(),
-  ip: IpPolicy = IpPolicy(),
-  cert: CertAuthPolicy = CertAuthPolicy(),
-  branding: Branding = Branding(),
-  audit: AuditPolicy = AuditPolicy()) derives ConfiguredCodec
+final case class PoliciesDto(password: PasswordPolicy = PasswordPolicy(),
+                             lockout: LockoutPolicy = LockoutPolicy(),
+                             mfa: MfaPolicy = MfaPolicy(),
+                             session: SessionPolicy = SessionPolicy(),
+                             ip: IpPolicy = IpPolicy(),
+                             cert: CertAuthPolicy = CertAuthPolicy(),
+                             branding: Branding = Branding(),
+                             audit: AuditPolicy = AuditPolicy()) derives ConfiguredCodec

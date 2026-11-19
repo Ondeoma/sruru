@@ -27,24 +27,15 @@ class SamlSpec extends munit.FunSuite {
       | <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" AllowCreate="true"/>
       |</samlp:AuthnRequest>""".stripMargin
 
-  private def enc(
-    s: String
-  ) = URLEncoder.encode(s, StandardCharsets.UTF_8)
+  private def enc(s: String) = URLEncoder.encode(s, StandardCharsets.UTF_8)
 
-  private def find(
-    doc: Document,
-    ns: String,
-    local: String
-  ): List[Element] = {
+  private def find(doc: Document, ns: String, local: String): List[Element] = {
     val nl = doc.getElementsByTagNameNS(ns, local)
     (0 until nl.getLength).map(i => nl.item(i).asInstanceOf[Element]).toList
   }
 
   /** テスト用: JDK の API で要素に enveloped 署名（inclusive C14N）を付ける. */
-  private def signWithJdk(
-    target: Element,
-    key: PrivateKey
-  ): Unit = {
+  private def signWithJdk(target: Element, key: PrivateKey): Unit = {
     val f = XMLSignatureFactory.getInstance("DOM")
     val id = target.getAttribute("ID")
     target.setIdAttributeNS(null, "ID", true)
@@ -89,10 +80,7 @@ class SamlSpec extends munit.FunSuite {
     ).isLeft)
   }
 
-  private def params(
-    signResponse: Boolean,
-    signAssertion: Boolean
-  ) = AssertionParams(
+  private def params(signResponse: Boolean, signAssertion: Boolean) = AssertionParams(
     idpEntityId = "https://idp.example",
     spEntityId = "https://sp.example/metadata",
     acsUrl = "https://sp.example/acs",

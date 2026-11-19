@@ -27,19 +27,15 @@ import sruru.security.SecretBox
 
 import scala.concurrent.duration.*
 
-final case class TlsConfig(
-  keystore: String,
-  password: String,
-  port: Int)
+final case class TlsConfig(keystore: String, password: String, port: Int)
 
-final case class AppConfig(
-  port: Int,
-  db: DbConfig,
-  api: ApiConfig,
-  staticDir: Option[String],
-  smtp: Option[SmtpConfig],
-  appSecret: String,
-  tls: Option[TlsConfig])
+final case class AppConfig(port: Int,
+                           db: DbConfig,
+                           api: ApiConfig,
+                           staticDir: Option[String],
+                           smtp: Option[SmtpConfig],
+                           appSecret: String,
+                           tls: Option[TlsConfig])
 
 object Main extends IOApp.Simple {
 
@@ -224,10 +220,7 @@ object Main extends IOApp.Simple {
     } yield ()
 
   /** DB（Patroni のプライマリ）が使えるまで待ってからマイグレーションする. 複数ノード同時起動でも Flyway のロックで1回だけ適用される. */
-  private def migrateWithRetry(
-    cfg: AppConfig,
-    attempt: Int = 1
-  ): IO[Int] =
+  private def migrateWithRetry(cfg: AppConfig, attempt: Int = 1): IO[Int] =
     Database.migrate(cfg.db).handleErrorWith { e =>
       if attempt >= 60 then IO.raiseError(e)
       else
@@ -236,12 +229,8 @@ object Main extends IOApp.Simple {
     }
 
   /** DB から定期的に読むメトリクス（skorimako のダッシュボード・アラート用）. */
-  private def gauges(
-    xa: doobie.Transactor[IO]
-  ): Resource[IO, Unit] = {
-    def q(
-      sqlText: doobie.Fragment
-    ): IO[Long] = sqlText.query[Long].unique.transact(xa)
+  private def gauges(xa: doobie.Transactor[IO]): Resource[IO, Unit] = {
+    def q(sqlText: doobie.Fragment): IO[Long] = sqlText.query[Long].unique.transact(xa)
     List(
       Metrics.gauge(
         "sruru.users.active",
@@ -264,19 +253,14 @@ object Main extends IOApp.Simple {
     ).sequence_
   }
 
-  private def setupNotice(
-    login: LoginRoutes
-  ): IO[Unit] =
+  private def setupNotice(login: LoginRoutes): IO[Unit] =
     // セットアップのトークンは秘密の値なので、ロガー（OTLP で skorimako に送られる）を通さず標準出力にだけ出す
     login.setupToken.flatMap(_.traverse_(t =>
       IO.println(s"[sruru] 管理者がいません。画面の /setup で最初の管理者を作ってください。セットアップのトークン: $t")
     ))
 
   /** ロードバランサー用のヘルスチェック. DB（プライマリ）に書けない状態なら 503. */
-  private def healthRoutes(
-    xa: doobie.Transactor[IO],
-    node: String
-  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+  private def healthRoutes(xa: doobie.Transactor[IO], node: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "healthz" =>
       sql"select not pg_is_in_recovery()".query[Boolean].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
         case Right(true) => text(Status.Ok, s"ok $node")
@@ -287,10 +271,7 @@ object Main extends IOApp.Simple {
       }
   }
 
-  private def text(
-    status: Status,
-    body: String
-  ): IO[Response[IO]] =
+  private def text(status: Status, body: String): IO[Response[IO]] =
     IO.pure(Response[IO](status).withEntity(body)(using EntityEncoder.stringEncoder))
 
   private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
@@ -303,11 +284,7 @@ object Main extends IOApp.Simple {
   private lazy val rumOrigin: Option[String] = RumRoutes.origin
 
   /** すべての応答に付けるヘッダー（埋め込み・MIME の推測の禁止）. 画面には CSP も付ける. */
-  private def securityHeaders(
-    https: Boolean
-  )(
-    app: HttpApp[IO]
-  ): HttpApp[IO] = HttpApp[IO] { req =>
+  private def securityHeaders(https: Boolean)(app: HttpApp[IO]): HttpApp[IO] = HttpApp[IO] { req =>
     app.run(req).map { r =>
       val base0 = r.putHeaders(
         "X-Content-Type-Options" -> "nosniff",
@@ -329,29 +306,22 @@ object Main extends IOApp.Simple {
   }
 
   /** 期限切れのセッション・トークン・監査ログの掃除（1時間ごと. 1ノードだけ）. */
-  private def purgeLoop(
-    sessions: SessionStore,
-    dir: Directory,
-    tokens: TokenStore,
-    factors: FactorStore,
-    audit: AuditStore,
-    mails: MailStore,
-    settings: SettingsStore,
-    policies: PolicyService,
-    lock: JobLock
-  ): IO[Unit] =
+  private def purgeLoop(sessions: SessionStore,
+                        dir: Directory,
+                        tokens: TokenStore,
+                        factors: FactorStore,
+                        audit: AuditStore,
+                        mails: MailStore,
+                        settings: SettingsStore,
+                        policies: PolicyService,
+                        lock: JobLock): IO[Unit] =
     Loops.every(2.minutes, 1.hour, ErrorCode.PurgeFailed)(lock.exclusive("purge", 50.minutes) {
       for {
         now <- IO.realTimeInstant
         p <- policies.get
         // 消したログインは、トークンの失効とバックチャネルの通知まで行う（自動で終わったログインのトークンを残さない）
         ended <- sessions.purgeLogins(now)
-        _ <- ended.traverse_(
-          (
-            lid,
-            uid
-          ) => dir.endLogin(uid, lid)
-        )
+        _ <- ended.traverse_((lid, uid) => dir.endLogin(uid, lid))
         // 無操作の時間はユーザーごと（グループの上書き）. 全体とグループのうち最も短い時間を過ぎたものを候補にして、ユーザーごとに判定する
         gs <- dir.groups.all
         idles = (p.session.idleMinutes :: gs.flatMap(_.policy.flatMap(_.session.idleMinutes))).filter(_ > 0)
@@ -359,10 +329,7 @@ object Main extends IOApp.Simple {
           sessions.idleLogins(now.minusSeconds(mi.toLong * 60))
         )
         _ <- cand.groupBy(_._2).toList.traverse_ {
-          (
-            uid,
-            ls
-          ) =>
+          (uid, ls) =>
             dir.users.find(uid).flatMap(_.traverse_(u =>
               dir.policyFor(u).flatMap { up =>
                 ls.filter(l =>
@@ -388,9 +355,7 @@ object Main extends IOApp.Simple {
     })
 
   /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
-  private def spa(
-    dir: String
-  ): HttpRoutes[IO] = {
+  private def spa(dir: String): HttpRoutes[IO] = {
     val files = fileService[IO](FileService.Config(dir))
     val index = HttpRoutes.of[IO] {
       case req @ GET -> _

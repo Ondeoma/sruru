@@ -17,27 +17,26 @@ import java.time.Instant
 import java.util.UUID
 
 /** 管理 API（システム管理者のみ）. */
-final class AdminRoutes(
-  dir: Directory,
-  factors: FactorStore,
-  sessions: SessionStore,
-  tokens: TokenStore,
-  apps: AppStore,
-  fedStore: FederationStore,
-  fed: FederationService,
-  auditStore: AuditStore,
-  keys: KeyService,
-  me: MeRoutes,
-  login: LoginService,
-  claims: Claims,
-  policies: PolicyService,
-  audit: AuditService,
-  mail: MailService,
-  box: SecretBox,
-  settings: SettingsStore,
-  icons: SiteIcon,
-  val auth: SessionAuth,
-  cfg: ApiConfig)
+final class AdminRoutes(dir: Directory,
+                        factors: FactorStore,
+                        sessions: SessionStore,
+                        tokens: TokenStore,
+                        apps: AppStore,
+                        fedStore: FederationStore,
+                        fed: FederationService,
+                        auditStore: AuditStore,
+                        keys: KeyService,
+                        me: MeRoutes,
+                        login: LoginService,
+                        claims: Claims,
+                        policies: PolicyService,
+                        audit: AuditService,
+                        mail: MailService,
+                        box: SecretBox,
+                        settings: SettingsStore,
+                        icons: SiteIcon,
+                        val auth: SessionAuth,
+                        cfg: ApiConfig)
   extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
@@ -115,9 +114,7 @@ final class AdminRoutes(
     case req @ POST -> Root / "api" / "admin" / "audit" / "verify" => postAdminAuditVerify(req)
   }
 
-  private def getAdminDashboard(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminDashboard(req: Request[IO]): IO[Response[IO]] =
     admin(req) { _ =>
       for {
         now <- Time.now
@@ -143,37 +140,22 @@ final class AdminRoutes(
       } yield res
     }
 
-  private def getAdminIdpInfo(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminIdpInfo(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => idpInfo.flatMap(Ok(_)))
 
-  private def getAdminUsers(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminUsers(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => listUsers(req).flatMap(Ok(_)))
 
-  private def postAdminUsers(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminUsers(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p => body[UserReq](req)(r => ctx(req).flatMap(c => okJson(createUser(p, r, c)))))
 
-  private def getAdminUser(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminUser(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ => withUser(id)(u => userDetail(u).flatMap(Ok(_))))
 
-  private def putAdminUser(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminUser(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p => body[UserReq](req)(r => ctx(req).flatMap(c => okJson(updateUser(p, id, r, c)))))
 
-  private def deleteAdminUser(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminUser(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req) { p =>
       if id == p.id then err(ErrorCode.SelfDeleteForbidden)
       else
@@ -183,10 +165,7 @@ final class AdminRoutes(
         )
     }
 
-  private def postAdminUserPassword(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserPassword(req: Request[IO], id: UUID): IO[Response[IO]] =
     adminWeb(req)(p =>
       body[SetPasswordReq](req) { r =>
         withUser(id) { u =>
@@ -207,39 +186,26 @@ final class AdminRoutes(
       }
     )
 
-  private def postAdminUserUnlock(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserUnlock(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u =>
         dir.users.unlock(id) *> audited(audit, req, p, "user.unlock", audit.userTarget(u)) *> NoContent()
       )
     )
 
-  private def postAdminUserResetMfa(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserResetMfa(req: Request[IO], id: UUID): IO[Response[IO]] =
     adminWeb(req)(p =>
       withUser(id)(u =>
         factors.resetMfa(id) *> audited(audit, req, p, "mfa.reset", audit.userTarget(u)) *> NoContent()
       )
     )
 
-  private def postAdminUserLogout(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserLogout(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u => revokeAll(u) *> audited(audit, req, p, "user.logout_all", audit.userTarget(u)) *> NoContent())
     )
 
-  private def deleteAdminUserSession(
-    req: Request[IO],
-    id: UUID,
-    sid: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminUserSession(req: Request[IO], id: UUID, sid: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u =>
         sessions.login(sid).flatMap {
@@ -251,11 +217,7 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminUserConsent(
-    req: Request[IO],
-    id: UUID,
-    appId: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminUserConsent(req: Request[IO], id: UUID, appId: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u =>
         apps.deleteConsent(id, appId) *> tokens.revokeUser(id, Some(appId)) *>
@@ -264,10 +226,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminUserAvatar(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserAvatar(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u =>
         Conv.readImage(req, cfg.maxAvatarBytes).flatMap {
@@ -278,10 +237,7 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminUserAvatar(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminUserAvatar(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       withUser(id)(u =>
         dir.users.setAvatar(id, None) *> audited(audit, req, p, "user.avatar.remove", audit.userTarget(u)) *>
@@ -289,10 +245,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminUserCerts(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserCerts(req: Request[IO], id: UUID): IO[Response[IO]] =
     adminWeb(req)(p =>
       body[CertReq](req)(r =>
         withUser(id)(u =>
@@ -303,11 +256,7 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminUserCert(
-    req: Request[IO],
-    id: UUID,
-    cid: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminUserCert(req: Request[IO], id: UUID, cid: UUID): IO[Response[IO]] =
     adminWeb(req)(p =>
       factors.deleteUserCert(cid, Some(id)).flatMap(ok =>
         if ok then audited(audit, req, p, "cert.remove", Some(("user", id.toString, ""))) *> NoContent()
@@ -315,10 +264,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminUserTokens(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminUserTokens(req: Request[IO], id: UUID): IO[Response[IO]] =
     adminWeb(req)(p =>
       body[TokenReq](req)(r =>
         withUser(id)(u =>
@@ -352,21 +298,14 @@ final class AdminRoutes(
       )
     )
 
-  private def getAdminGroups(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminGroups(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
-      (dir.groups.all, dir.groups.memberCounts).flatMapN(
-        (
-          gs,
-          cs
-        ) => Ok(gs.map(g => dir.groupDto(g, cs.getOrElse(g.id, 0))))
+      (dir.groups.all, dir.groups.memberCounts).flatMapN((gs, cs) =>
+        Ok(gs.map(g => dir.groupDto(g, cs.getOrElse(g.id, 0))))
       )
     )
 
-  private def postAdminGroups(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminGroups(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
       body[GroupReq](req) { r =>
         groupFrom(r) match {
@@ -394,20 +333,14 @@ final class AdminRoutes(
       }
     )
 
-  private def getAdminGroup(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminGroup(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ =>
       dir.groups.find(id).flatMap(_.fold(err(ErrorCode.GroupNotFound))(g =>
         dir.groups.effectiveMembers(id).flatMap(ms => Ok(dir.groupDto(g, ms.size)))
       ))
     )
 
-  private def putAdminGroup(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminGroup(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[GroupReq](req) { r =>
         dir.groups.find(id).flatMap {
@@ -452,20 +385,14 @@ final class AdminRoutes(
       }
     )
 
-  private def deleteAdminGroup(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminGroup(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       dir.groups.find(id).flatMap(_.fold(err(ErrorCode.GroupNotFound))(g =>
         dir.groups.delete(id) *> audited(audit, req, p, "group.delete", audit.groupTarget(g)) *> NoContent()
       ))
     )
 
-  private def getAdminGroupMembers(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminGroupMembers(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req) { _ =>
       for {
         p <- policies.get
@@ -480,10 +407,7 @@ final class AdminRoutes(
       } yield res
     }
 
-  private def putAdminGroupMembers(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminGroupMembers(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[MembersReq](req)(r =>
         dir.groups.setMembers(id, r.userIds) *>
@@ -498,10 +422,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminGroupMembers(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminGroupMembers(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[MembersReq](req)(r =>
         r.userIds.traverse_(u => dir.groups.addMember(id, u)) *>
@@ -516,11 +437,7 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminGroupMember(
-    req: Request[IO],
-    id: UUID,
-    uid: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminGroupMember(req: Request[IO], id: UUID, uid: UUID): IO[Response[IO]] =
     admin(req)(p =>
       dir.groups.removeMember(id, uid) *>
         audited(
@@ -533,15 +450,10 @@ final class AdminRoutes(
         ) *> NoContent()
     )
 
-  private def getAdminAttributes(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminAttributes(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => dir.users.attributeDefs.flatMap(ds => Ok(ds.map(Conv.attrDef))))
 
-  private def putAdminAttribute(
-    req: Request[IO],
-    key: String
-  ): IO[Response[IO]] =
+  private def putAdminAttribute(req: Request[IO], key: String): IO[Response[IO]] =
     admin(req)(p =>
       body[AttributeDefDto](req) { d =>
         if !key.matches("^[a-zA-Z_][a-zA-Z0-9_]{0,63}$") then err(ErrorCode.AttributeKeyInvalid)
@@ -560,72 +472,41 @@ final class AdminRoutes(
       }
     )
 
-  private def deleteAdminAttribute(
-    req: Request[IO],
-    key: String
-  ): IO[Response[IO]] =
+  private def deleteAdminAttribute(req: Request[IO], key: String): IO[Response[IO]] =
     admin(req)(p =>
       dir.users.deleteAttributeDef(key) *> audited(audit, req, p, "attribute.delete", Some(("attribute", key, ""))) *>
         NoContent()
     )
 
-  private def getAdminApps(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminApps(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => apps.all.flatMap(_.traverse(appDto)).flatMap(Ok(_)))
 
-  private def postAdminApps(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminApps(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p => body[AppReq](req)(r => ctx(req).flatMap(c => okJson(createApp(p, r, c)))))
 
-  private def getAdminApp(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminApp(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ =>
       apps.find(id).flatMap(_.fold(err(ErrorCode.AppNotFound))(a => appDto(a).flatMap(Ok(_))))
     )
 
-  private def putAdminApp(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminApp(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p => body[AppReq](req)(r => ctx(req).flatMap(c => okJson(updateApp(p, id, r, c)))))
 
-  private def deleteAdminApp(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminApp(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       apps.find(id).flatMap(_.fold(err(ErrorCode.AppNotFound))(a =>
         apps.delete(id) *> audited(audit, req, p, "app.delete", audit.appTarget(a)) *> NoContent()
       ))
     )
 
-  private def groupNamesDto(
-    id: UUID
-  ): IO[List[AppGroupNameDto]] =
-    apps.groupNames(id).map(_.map(
-      (
-        g,
-        gn,
-        n,
-        l
-      ) => AppGroupNameDto(g, gn, n.getOrElse(""), l)
-    ))
+  private def groupNamesDto(id: UUID): IO[List[AppGroupNameDto]] =
+    apps.groupNames(id).map(_.map((g, gn, n, l) => AppGroupNameDto(g, gn, n.getOrElse(""), l)))
 
-  private def getAdminAppGroupNames(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminAppGroupNames(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ => apps.find(id).flatMap(_.fold(err(ErrorCode.AppNotFound))(_ => groupNamesDto(id).flatMap(Ok(_)))))
 
   /** グループごとの表示名・ロゴを置き換える. */
-  private def putAdminAppGroupNames(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminAppGroupNames(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[AppGroupNamesReq](req)(r =>
         apps.find(id).flatMap {
@@ -655,10 +536,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminAppSecret(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminAppSecret(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       apps.find(id).flatMap {
         case Some(a) if a.protocol == "oidc" =>
@@ -669,10 +547,7 @@ final class AdminRoutes(
       }
     )
 
-  private def postAdminAppIcon(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminAppIcon(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       Conv.readImage(req, cfg.maxAvatarBytes).flatMap {
         case Left(e) => err(ErrorCode.InvalidInput, e)
@@ -681,10 +556,7 @@ final class AdminRoutes(
       }
     )
 
-  private def postAdminAppIconFetch(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminAppIconFetch(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       apps.find(id).flatMap {
         case None => err(ErrorCode.AppNotFound)
@@ -697,16 +569,10 @@ final class AdminRoutes(
       }
     )
 
-  private def deleteAdminAppIcon(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminAppIcon(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ => apps.setIcon(id, None) *> NoContent())
 
-  private def postAdminAppPreview(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminAppPreview(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ =>
       body[PreviewReq](req)(r =>
         (apps.find(id), dir.users.find(r.userId)).tupled.flatMap {
@@ -716,9 +582,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminSamlParseMetadata(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminSamlParseMetadata(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
       req.bodyText.compile.string.flatMap(xml =>
         Saml.parseSpMetadata(xml) match {
@@ -735,9 +599,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminExprTest(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminExprTest(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
       body[Json](req) { j =>
         val c = j.hcursor
@@ -747,12 +609,7 @@ final class AdminRoutes(
               case Left(msg) => Ok(Json.obj("error" -> msg.asJson))
               case Right(_) =>
                 dir.users.find(uid).flatMap(_.fold(err(ErrorCode.UserNotFound))(u =>
-                  dir.context(u).flatMap(
-                    (
-                      ctx,
-                      _
-                    ) => Ok(Json.obj("value" -> Expr.eval(e, Context.of(ctx, None))))
-                  )
+                  dir.context(u).flatMap((ctx, _) => Ok(Json.obj("value" -> Expr.eval(e, Context.of(ctx, None)))))
                 ))
             }
           case _ => err(ErrorCode.GroupRuleTestInputRequired)
@@ -760,14 +617,10 @@ final class AdminRoutes(
       }
     )
 
-  private def getAdminPolicies(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminPolicies(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => policies.get.flatMap(Ok(_)))
 
-  private def putAdminPolicies(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def putAdminPolicies(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
       body[PoliciesDto](req) { np =>
         val checks = List(
@@ -808,9 +661,7 @@ final class AdminRoutes(
       }
     )
 
-  private def postAdminLogos(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminLogos(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
       Conv.readImage(req, Conv.MaxLogoBytes, allowSvg = true).flatMap {
         case Left(e) => err(ErrorCode.InvalidInput, e)
@@ -822,14 +673,10 @@ final class AdminRoutes(
       }
     )
 
-  private def getAdminFederation(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminFederation(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ => fedStore.all.flatMap(fs => Ok(fs.map(fedDto))))
 
-  private def postAdminFederation(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminFederation(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
       body[FederationReq](req)(r =>
         fedFrom(r, None) match {
@@ -845,10 +692,7 @@ final class AdminRoutes(
       )
     )
 
-  private def putAdminFederation(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminFederation(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[FederationReq](req)(r =>
         fedStore.find(id).flatMap {
@@ -868,19 +712,13 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminFederation(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminFederation(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       fedStore.delete(id) *> audited(audit, req, p, "federation.delete", Some(("federation", id.toString, ""))) *>
         NoContent()
     )
 
-  private def postAdminFederationSync(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def postAdminFederationSync(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       fedStore.find(id).flatMap {
         case None => err(ErrorCode.ItemNotFound)
@@ -888,9 +726,7 @@ final class AdminRoutes(
       }
     )
 
-  private def getAdminCertAuthorities(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminCertAuthorities(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
       factors.authorities.flatMap(cs =>
         Ok(cs.map { a =>
@@ -907,9 +743,7 @@ final class AdminRoutes(
       )
     )
 
-  private def postAdminCertAuthorities(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminCertAuthorities(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
       body[CertAuthorityReq](req)(r =>
         Jose.parseCerts(r.pem) match {
@@ -933,49 +767,33 @@ final class AdminRoutes(
       )
     )
 
-  private def deleteAdminCertAuthority(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminCertAuthority(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       factors.deleteAuthority(id) *>
         audited(audit, req, p, "cert_authority.delete", Some(("cert_authority", id.toString, ""))) *> NoContent()
     )
 
-  private def getAdminTokens(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminTokens(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
-      (factors.allTokens, policies.get).flatMapN(
-        (
-          ts,
-          p
-        ) =>
-          dir.users.findMany(ts.map(_.userId).distinct).flatMap(us =>
-            Ok(ts.map(t => Conv.token(t, us.find(_.id == t.userId).map(dir.brief(_, p.branding.gravatar)))))
-          )
+      (factors.allTokens, policies.get).flatMapN((ts, p) =>
+        dir.users.findMany(ts.map(_.userId).distinct).flatMap(us =>
+          Ok(ts.map(t => Conv.token(t, us.find(_.id == t.userId).map(dir.brief(_, p.branding.gravatar)))))
+        )
       )
     )
 
-  private def deleteAdminToken(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def deleteAdminToken(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       factors.deleteToken(id, None) *> audited(audit, req, p, "token.delete", Some(("token", id.toString, ""))) *>
         NoContent()
     )
 
-  private def getAdminKeys(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminKeys(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
       tokens.keys.flatMap(ks => Ok(ks.map(k => KeyDto(k.kid, k.alg, k.active, k.createdAt, k.retiredAt))))
     )
 
-  private def postAdminKeysRotate(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminKeysRotate(req: Request[IO]): IO[Response[IO]] =
     admin(req) { p =>
       val alg = q(req, "alg").filter(Set("RS256", "ES256")).getOrElse("RS256")
       keys.rotate(alg).flatMap(k =>
@@ -984,10 +802,7 @@ final class AdminRoutes(
       )
     }
 
-  private def deleteAdminKey(
-    req: Request[IO],
-    kid: String
-  ): IO[Response[IO]] =
+  private def deleteAdminKey(req: Request[IO], kid: String): IO[Response[IO]] =
     admin(req)(p =>
       keys.retire(kid).flatMap(ok =>
         if ok then audited(audit, req, p, "key.retire", Some(("key", kid, ""))) *> NoContent()
@@ -995,21 +810,12 @@ final class AdminRoutes(
       )
     )
 
-  private def getAdminAudit(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminAudit(req: Request[IO]): IO[Response[IO]] =
     admin(req)(_ =>
-      auditStore.search(auditQuery(req)).flatMap(
-        (
-          rows,
-          total
-        ) => Ok(AuditListDto(rows.map(auditDto), total))
-      )
+      auditStore.search(auditQuery(req)).flatMap((rows, total) => Ok(AuditListDto(rows.map(auditDto), total)))
     )
 
-  private def getAdminAuditCsv(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getAdminAuditCsv(req: Request[IO]): IO[Response[IO]] =
     admin(req) { p =>
       val header = "id,at,actor,via,action,target_type,target_id,target_name,ip,user_agent,success,detail\n"
       val rows = auditStore.stream(auditQuery(req).copy(limit = Int.MaxValue)).map { r =>
@@ -1039,23 +845,17 @@ final class AdminRoutes(
         )
     }
 
-  private def postAdminAuditVerify(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postAdminAuditVerify(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
-      auditStore.verify.flatMap(
-        (
-          n,
-          broken
-        ) =>
-          audited(
-            audit,
-            req,
-            p,
-            "audit.verify",
-            None,
-            Json.obj("checked" -> n.asJson, "brokenAt" -> broken.asJson)
-          ) *> Ok(AuditVerifyDto(n, broken))
+      auditStore.verify.flatMap((n, broken) =>
+        audited(
+          audit,
+          req,
+          p,
+          "audit.verify",
+          None,
+          Json.obj("checked" -> n.asJson, "brokenAt" -> broken.asJson)
+        ) *> Ok(AuditVerifyDto(n, broken))
       )
     )
 
@@ -1083,23 +883,13 @@ final class AdminRoutes(
 
   // ------------------------------------------------------------------ ユーザー
 
-  private def userDto(
-    u: User
-  ): IO[UserDto] =
+  private def userDto(u: User): IO[UserDto] =
     (dir.membership(u), dir.hasTotp(u.id), policies.get, Time.now, dir.groups.staticGroupIds(u.id)).mapN(
-      (
-        m,
-        mfa,
-        p,
-        now,
-        direct
-      ) =>
+      (m, mfa, p, now, direct) =>
         dir.userDto(u, m, mfa, p.branding.gravatar, now, direct)
     )
 
-  private def listUsers(
-    req: Request[IO]
-  ): IO[UserListDto] = {
+  private def listUsers(req: Request[IO]): IO[UserListDto] = {
     val query = UserQuery(
       q(req, "q"),
       q(req, "status"),
@@ -1120,11 +910,7 @@ final class AdminRoutes(
     )
   }
 
-  private def fromReq(
-    r: UserReq,
-    prev: Option[User],
-    defs: List[AttributeDef]
-  ): Either[String, User => User] =
+  private def fromReq(r: UserReq, prev: Option[User], defs: List[AttributeDef]): Either[String, User => User] =
     for {
       name <- dir.validUsername(r.username)
       email <- dir.validEmail(r.email)
@@ -1146,11 +932,7 @@ final class AdminRoutes(
         phoneNumber = r.phoneNumber.filter(_.nonEmpty)
       )
 
-  private def createUser(
-    p: Principal,
-    r: UserReq,
-    c: ReqCtx
-  ): Res[UserDto] =
+  private def createUser(p: Principal, r: UserReq, c: ReqCtx): Res[UserDto] =
     dir.users.attributeDefs.flatMap { defs =>
       fromReq(r, None, defs) match {
         case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
@@ -1175,12 +957,7 @@ final class AdminRoutes(
       }
     }
 
-  private def updateUser(
-    p: Principal,
-    id: UUID,
-    r: UserReq,
-    c: ReqCtx
-  ): Res[UserDto] =
+  private def updateUser(p: Principal, id: UUID, r: UserReq, c: ReqCtx): Res[UserDto] =
     (dir.users.find(id), dir.users.attributeDefs).tupled.flatMap {
       case (None, _) => Res.fail(ErrorCode.UserNotFound)
       case (Some(u), defs) =>
@@ -1217,10 +994,7 @@ final class AdminRoutes(
         }
     }
 
-  private def diff(
-    a: User,
-    b: User
-  ): Json = {
+  private def diff(a: User, b: User): Json = {
     val pairs = List(
       "username" -> (a.username, b.username),
       "name" -> (a.name, b.name),
@@ -1229,28 +1003,16 @@ final class AdminRoutes(
       "disabled" -> (a.disabled.toString, b.disabled.toString),
       "attributes" -> (a.attributes.noSpaces, b.attributes.noSpaces)
     )
-    Json.fromFields(pairs.filter(
-      (
-        _,
-        v
-      ) => v._1 != v._2
-    ).map(
-      (
-        k,
-        v
-      ) => k -> Json.obj("from" -> v._1.asJson, "to" -> v._2.asJson)
+    Json.fromFields(pairs.filter((_, v) => v._1 != v._2).map((k, v) =>
+      k -> Json.obj("from" -> v._1.asJson, "to" -> v._2.asJson)
     ))
   }
 
   /** すべてのログインを終わらせ、トークンを失効させる. */
-  private def revokeAll(
-    u: User
-  ): IO[Unit] =
+  private def revokeAll(u: User): IO[Unit] =
     dir.revokeEverything(u, None)
 
-  private def userDetail(
-    u: User
-  ): IO[UserDetailDto] =
+  private def userDetail(u: User): IO[UserDetailDto] =
     for {
       d <- userDto(u)
       now <- Time.now
@@ -1275,18 +1037,10 @@ final class AdminRoutes(
           i.lastLoginAt
         )
       ),
-      cons.flatMap(
-        (
-          a,
-          s,
-          t
-        ) => as.find(_.id == a).map(x => ConsentDto(login.appBrief(x), s, t))
-      )
+      cons.flatMap((a, s, t) => as.find(_.id == a).map(x => ConsentDto(login.appBrief(x), s, t)))
     )
 
-  private def policyEditorsDto(
-    id: UUID
-  ): IO[PolicyEditorsDto] =
+  private def policyEditorsDto(id: UUID): IO[PolicyEditorsDto] =
     for {
       p <- policies.get
       ed <- dir.groups.policyEditors(id)
@@ -1298,18 +1052,12 @@ final class AdminRoutes(
     )
 
   /** グループのポリシーを編集できる人（ユーザー・グループ）. */
-  private def getAdminGroupPolicyEditors(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def getAdminGroupPolicyEditors(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(_ =>
       dir.groups.find(id).flatMap(_.fold(err(ErrorCode.GroupNotFound))(_ => policyEditorsDto(id).flatMap(Ok(_))))
     )
 
-  private def putAdminGroupPolicyEditors(
-    req: Request[IO],
-    id: UUID
-  ): IO[Response[IO]] =
+  private def putAdminGroupPolicyEditors(req: Request[IO], id: UUID): IO[Response[IO]] =
     admin(req)(p =>
       body[PolicyEditorsReq](req)(r =>
         (
@@ -1334,18 +1082,12 @@ final class AdminRoutes(
       )
     )
 
-  private def withUser(
-    id: UUID
-  )(
-    f: User => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withUser(id: UUID)(f: User => IO[Response[IO]]): IO[Response[IO]] =
     dir.users.find(id).flatMap(_.fold(err(ErrorCode.UserNotFound))(f))
 
   // ------------------------------------------------------------------ グループ
 
-  private def groupFrom(
-    r: GroupReq
-  ): Either[String, (String, Option[GroupRule], Option[GroupPolicy])] =
+  private def groupFrom(r: GroupReq): Either[String, (String, Option[GroupRule], Option[GroupPolicy])] =
     for {
       name <- Either.cond(r.name.trim.nonEmpty && r.name.trim.length <= 200, r.name.trim, "グループ名を入力してください")
       _ <- Either.cond(r.attributes.isObject, (), "属性は JSON のオブジェクトで指定してください")
@@ -1360,10 +1102,7 @@ final class AdminRoutes(
    * 親グループの確認: すべて存在すること. 条件（動的なメンバー）を付けるグループは、管理者のグループの下に置けない
    * （親のどれかが管理者なら、このグループのメンバーも管理者になるため. 条件で管理者が決まらないように）.
    */
-  private def checkParents(
-    parents: List[UUID],
-    rule: Option[GroupRule]
-  ): IO[Either[String, Unit]] =
+  private def checkParents(parents: List[UUID], rule: Option[GroupRule]): IO[Either[String, Unit]] =
     dir.groups.all.map { all =>
       val byId = all.map(g => g.id -> g).toMap
       parents.find(p => !byId.contains(p)).map(_ => "親のグループが見つかりません").toLeft(())
@@ -1378,16 +1117,9 @@ final class AdminRoutes(
 
   // ------------------------------------------------------------------ アプリケーション
 
-  private def appDto(
-    a: Application
-  ): IO[AppDto] =
+  private def appDto(a: Application): IO[AppDto] =
     (apps.oidc(a.id), apps.saml(a.id), apps.mappings(a.id), apps.accessGroups(a.id)).mapN {
-      (
-        o,
-        s,
-        ms,
-        gs
-      ) =>
+      (o, s, ms, gs) =>
         AppDto(
           a.id,
           a.slug,
@@ -1442,24 +1174,18 @@ final class AdminRoutes(
     }
 
   /** http・https の URL. */
-  private def webUrl(
-    s: String
-  ): Boolean =
+  private def webUrl(s: String): Boolean =
     scala.util.Try(new java.net.URI(s)).toOption.exists(u =>
       Set("http", "https").contains(Option(u.getScheme).getOrElse("")) && u.getHost != null
     )
 
   /** OIDC のリダイレクト URI（ネイティブアプリのカスタムスキームも許す. 危険なスキームは除く）. */
-  private def validUrl(
-    s: String
-  ): Boolean =
+  private def validUrl(s: String): Boolean =
     webUrl(s) ||
       s.matches("^[a-z][a-z0-9+.-]*:/.+") &&
       !Set("javascript", "data", "vbscript", "file", "blob").contains(s.takeWhile(_ != ':'))
 
-  private def validateApp(
-    r: AppReq
-  ): Either[String, Unit] =
+  private def validateApp(r: AppReq): Either[String, Unit] =
     for {
       _ <- Either.cond(r.slug.matches("^[a-z0-9][a-z0-9-]{0,62}$"), (), "スラッグは英小文字・数字・ハイフンにしてください")
       _ <- Either.cond(r.name.trim.nonEmpty, (), "名前を入力してください")
@@ -1508,11 +1234,7 @@ final class AdminRoutes(
       _ <- Either.cond(r.protocol != "saml" || r.saml.isDefined, (), "SAML の設定がありません")
     } yield ()
 
-  private def application(
-    id: UUID,
-    r: AppReq,
-    now: Instant
-  ): Application =
+  private def application(id: UUID, r: AppReq, now: Instant): Application =
     Application(
       id,
       r.slug,
@@ -1530,12 +1252,7 @@ final class AdminRoutes(
       now
     )
 
-  private def oidcCfg(
-    id: UUID,
-    o: OidcDto,
-    slug: String,
-    secret: Option[Array[Byte]]
-  ): OidcClientConfig =
+  private def oidcCfg(id: UUID, o: OidcDto, slug: String, secret: Option[Array[Byte]]): OidcClientConfig =
     OidcClientConfig(
       id,
       o.clientId.trim.some.filter(_.nonEmpty).getOrElse(slug),
@@ -1555,10 +1272,7 @@ final class AdminRoutes(
       o.includeAppNames
     )
 
-  private def samlCfg(
-    id: UUID,
-    s: SamlDto
-  ): SamlConfig =
+  private def samlCfg(id: UUID, s: SamlDto): SamlConfig =
     SamlConfig(
       id,
       s.entityId.trim,
@@ -1574,10 +1288,7 @@ final class AdminRoutes(
       s.sessionTtl
     )
 
-  private def mappingsOf(
-    id: UUID,
-    r: AppReq
-  ): List[AttrMapping] =
+  private def mappingsOf(id: UUID, r: AppReq): List[AttrMapping] =
     r.mappings.map(m =>
       AttrMapping(
         UUID.randomUUID(),
@@ -1591,11 +1302,7 @@ final class AdminRoutes(
       )
     )
 
-  private def createApp(
-    p: Principal,
-    r: AppReq,
-    c: ReqCtx
-  ): Res[AppCreatedDto] =
+  private def createApp(p: Principal, r: AppReq, c: ReqCtx): Res[AppCreatedDto] =
     validateApp(r) match {
       case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
       case Right(_) =>
@@ -1618,34 +1325,21 @@ final class AdminRoutes(
     }
 
   /** アイコンを取りに行くサイト: 起動の URL、なければ OIDC のリダイレクト URI・SAML の ACS（https のもの）. */
-  private def siteOf(
-    id: UUID
-  ): IO[Option[String]] =
+  private def siteOf(id: UUID): IO[Option[String]] =
     (apps.find(id), apps.oidc(id), apps.saml(id)).mapN {
-      (
-        a,
-        o,
-        s
-      ) =>
+      (a, o, s) =>
         (a.flatMap(_.launchUrl).toList ++ o.toList.flatMap(_.redirectUris) ++ s.map(_.acsUrl).toList)
           .find(u => Uri.fromString(u).toOption.exists(SiteIcon.allowed))
     }
 
   /** サイトのアイコンを取ってアプリのアイコンにする. */
-  private def fetchIcon(
-    id: UUID
-  ): IO[Either[String, Unit]] =
+  private def fetchIcon(id: UUID): IO[Either[String, Unit]] =
     siteOf(id).flatMap {
       case None => IO.pure(Left("アイコンを取りに行ける URL（https の起動の URL・リダイレクト URI・ACS）がありません"))
       case Some(site) => icons.fetch(site).flatMap(_.traverse(img => apps.setIcon(id, Some(img))))
     }
 
-  private def updateApp(
-    p: Principal,
-    id: UUID,
-    r: AppReq,
-    c: ReqCtx
-  ): Res[AppDto] =
+  private def updateApp(p: Principal, id: UUID, r: AppReq, c: ReqCtx): Res[AppDto] =
     apps.find(id).flatMap {
       case None => Res.fail(ErrorCode.AppNotFound)
       case Some(a) =>
@@ -1681,21 +1375,14 @@ final class AdminRoutes(
     }
 
   /** このユーザーに渡すクレーム・属性の見本. */
-  private def preview(
-    a: Application,
-    u: User
-  ): IO[Json] =
+  private def preview(a: Application, u: User): IO[Json] =
     dir.membership(u).flatMap { m =>
       a.protocol match {
         case "oidc" =>
           apps.oidc(a.id).flatMap(_.fold(IO.pure(Json.obj()))(c => claims.build(u, m, a, c, c.scopes.toSet)))
         case _ =>
           (apps.saml(a.id), apps.mappings(a.id), dir.picture(u)).flatMapN {
-            (
-              s,
-              ms,
-              pic
-            ) =>
+            (s, ms, pic) =>
               val ctx = Context.of(Context.user(u, m, pic), Some(a))
               IO.pure(Json.obj(
                 "nameId" -> s.map(x => Expr.render(Expr.eval(x.nameIdExpr, ctx))).asJson,
@@ -1709,9 +1396,7 @@ final class AdminRoutes(
 
   // ------------------------------------------------------------------ 外部の IdP
 
-  private def fedDto(
-    p: FederationProvider
-  ): FederationDto = {
+  private def fedDto(p: FederationProvider): FederationDto = {
     val sync = fed.syncConfig(p).map(j =>
       j.mapObject(_.filterKeys(k => !Set("serviceAccountJson", "clientSecret").contains(k)))
         .deepMerge(Json.obj("hasKey" -> j.hcursor.downField(
@@ -1743,10 +1428,7 @@ final class AdminRoutes(
     )
   }
 
-  private def fedFrom(
-    r: FederationReq,
-    prev: Option[FederationProvider]
-  ): Either[String, FederationProvider] =
+  private def fedFrom(r: FederationReq, prev: Option[FederationProvider]): Either[String, FederationProvider] =
     for {
       _ <- Either.cond(r.slug.matches("^[a-z0-9][a-z0-9-]{0,62}$"), (), "スラッグは英小文字・数字・ハイフンにしてください")
       _ <- Either.cond(Set("google", "entra", "oidc").contains(r.kind), (), "種類は google・entra・oidc です")
@@ -1771,11 +1453,8 @@ final class AdminRoutes(
       val prevSync = prev.flatMap(fed.syncConfig)
       val sync = r.syncConfig.filterNot(_.isNull).map(j =>
         prevSync.fold(j)(_.deepMerge(j.dropNullValues).deepMerge(
-          Json.fromFields(j.asObject.toList.flatMap(_.toList).filter(
-            (
-              _,
-              v
-            ) => v.asString.exists(_.nonEmpty) || !v.isString
+          Json.fromFields(j.asObject.toList.flatMap(_.toList).filter((_, v) =>
+            v.asString.exists(_.nonEmpty) || !v.isString
           ))
         ))
       )
@@ -1809,14 +1488,10 @@ final class AdminRoutes(
 
   // ------------------------------------------------------------------ 監査ログ
 
-  private def auditQuery(
-    req: Request[IO]
-  ): AuditQuery = {
-    def instant(
-      s: String
-    ) = scala.util.Try(Instant.parse(s)).toOption.orElse(scala.util.Try(java.time.LocalDateTime.parse(s).atZone(
-      java.time.ZoneId.of("Asia/Tokyo")
-    ).toInstant).toOption).orElse(scala.util.Try(java.time.LocalDate.parse(s).atStartOfDay(
+  private def auditQuery(req: Request[IO]): AuditQuery = {
+    def instant(s: String) = scala.util.Try(Instant.parse(s)).toOption.orElse(scala.util.Try(
+      java.time.LocalDateTime.parse(s).atZone(java.time.ZoneId.of("Asia/Tokyo")).toInstant
+    ).toOption).orElse(scala.util.Try(java.time.LocalDate.parse(s).atStartOfDay(
       java.time.ZoneId.of("Asia/Tokyo")
     ).toInstant).toOption)
     AuditQuery(
@@ -1833,9 +1508,7 @@ final class AdminRoutes(
     )
   }
 
-  private def auditDto(
-    r: AuditRow
-  ): AuditDto =
+  private def auditDto(r: AuditRow): AuditDto =
     AuditDto(
       r.id,
       r.at,
@@ -1852,9 +1525,7 @@ final class AdminRoutes(
       r.detail
     )
 
-  private def csvCell(
-    s: String
-  ): String = {
+  private def csvCell(s: String): String = {
     val t = if s.headOption.exists("=+-@".contains(_)) then "'" + s else s // 表計算ソフトでの式の実行を防ぐ
     "\"" + t.replace("\"", "\"\"") + "\""
   }

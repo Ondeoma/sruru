@@ -13,18 +13,9 @@ object SamlMapping {
     ("givenName", "{{user.given_name}}", false),
     ("surname", "{{user.family_name}}", false),
     ("groups", "{{user.groups}}", true)
-  ).map(
-    (
-      n,
-      e,
-      m
-    ) => AttrMapping(java.util.UUID(0, 0), java.util.UUID(0, 0), n, e, None, None, m, 0)
-  )
+  ).map((n, e, m) => AttrMapping(java.util.UUID(0, 0), java.util.UUID(0, 0), n, e, None, None, m, 0))
 
-  def attributes(
-    ms: List[AttrMapping],
-    ctx: Json
-  ): List[SamlAttribute] =
+  def attributes(ms: List[AttrMapping], ctx: Json): List[SamlAttribute] =
     (if ms.isEmpty then defaults else ms).flatMap { m =>
       val v = Expr.eval(m.expression, ctx)
       val values = v.asArray.map(_.toList.map(Expr.render)).getOrElse(if v.isNull then Nil

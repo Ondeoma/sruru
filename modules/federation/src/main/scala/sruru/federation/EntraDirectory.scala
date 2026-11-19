@@ -8,13 +8,12 @@ import org.http4s.*
 import org.http4s.client.Client
 
 /** Microsoft Entra ID（Microsoft Graph. クライアント資格情報）. */
-final class EntraDirectory(
-  http: Client[IO],
-  tenantId: String,
-  clientId: String,
-  clientSecret: String,
-  graphBase: String = "https://graph.microsoft.com",
-  loginBase: String = "https://login.microsoftonline.com") extends DirectorySource {
+final class EntraDirectory(http: Client[IO],
+                           tenantId: String,
+                           clientId: String,
+                           clientSecret: String,
+                           graphBase: String = "https://graph.microsoft.com",
+                           loginBase: String = "https://login.microsoftonline.com") extends DirectorySource {
   private val tokens = TokenCache(requestToken)
 
   private def requestToken: IO[(String, Long)] =
@@ -34,15 +33,9 @@ final class EntraDirectory(
         IO.fromOption(j.hcursor.get[String]("access_token").toOption)(new FederationError("Entra の応答にアクセストークンがありません"))
     } yield (t, j.hcursor.get[Long]("expires_in").getOrElse(3600L))
 
-  private def graph(
-    pathAndQuery: String
-  ): IO[Uri] = HttpUtil.uri(graphBase.stripSuffix("/") + pathAndQuery)
+  private def graph(pathAndQuery: String): IO[Uri] = HttpUtil.uri(graphBase.stripSuffix("/") + pathAndQuery)
 
-  private def paged(
-    token: String,
-    what: String,
-    start: Uri
-  ): IO[List[Json]] = {
+  private def paged(token: String, what: String, start: Uri): IO[List[Json]] = {
     val get = (u: Uri) =>
       HttpUtil.json(
         http,
@@ -68,10 +61,7 @@ final class EntraDirectory(
       gu <- graph("/v1.0/groups?$select=id,displayName,description,mail&$top=999")
       gs <- paged(token, "Entra のグループの取得", gu)
       groups <- gs.flatMap(g => Dir.str(g.hcursor, "id").map(_ -> g)).parTraverseN(Dir.Parallelism) {
-        (
-          id,
-          g
-        ) =>
+        (id, g) =>
           graph(s"/v1.0/groups/${Uri.pathEncode(id)}/transitiveMembers/microsoft.graph.user?$$select=id&$$top=999")
             .flatMap(paged(token, "Entra のグループのメンバーの取得", _)).map { ms =>
               val c = g.hcursor
@@ -86,9 +76,7 @@ final class EntraDirectory(
       }
     } yield DirSnapshot(users, groups)
 
-  def photo(
-    u: DirUser
-  ): IO[Option[(Array[Byte], String)]] =
+  def photo(u: DirUser): IO[Option[(Array[Byte], String)]] =
     for {
       token <- tokens.token
       pu <- graph(s"/v1.0/users/${Uri.pathEncode(u.externalId)}/photo/$$value")
@@ -104,17 +92,13 @@ object EntraDirectory {
   val UserFields =
     "id,userPrincipalName,mail,displayName,givenName,surname,accountEnabled,department,jobTitle,employeeId,mobilePhone,officeLocation"
 
-  def toUser(
-    j: Json
-  ): Option[DirUser] = {
+  def toUser(j: Json): Option[DirUser] = {
     val c = j.hcursor
     for {
       id <- Dir.str(c, "id")
       upn <- Dir.str(c, "userPrincipalName")
     } yield {
-      def a(
-        k: String
-      ) = Dir.str(c, k).map(_.asJson)
+      def a(k: String) = Dir.str(c, k).map(_.asJson)
       DirUser(
         externalId = id,
         username = upn,

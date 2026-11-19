@@ -10,31 +10,24 @@ import java.time.Instant
 import java.util.UUID
 
 /** 認可コードに結び付けた内容. */
-final case class OAuthCode(
-  clientId: String,
-  userId: UUID,
-  redirectUri: String,
-  codeChallenge: String,
-  scopes: List[String])
+final case class OAuthCode(clientId: String,
+                           userId: UUID,
+                           redirectUri: String,
+                           codeChallenge: String,
+                           scopes: List[String])
 
 /** 連携（利用者 × クライアント）. lastUsedAt は今のアクセストークンを最後に使った日時. */
-final case class OAuthGrant(
-  id: UUID,
-  userId: UUID,
-  clientId: String,
-  scopes: List[String],
-  tokenId: UUID,
-  createdAt: Instant,
-  lastUsedAt: Option[Instant],
-  expiresAt: Instant)
+final case class OAuthGrant(id: UUID,
+                            userId: UUID,
+                            clientId: String,
+                            scopes: List[String],
+                            tokenId: UUID,
+                            createdAt: Instant,
+                            lastUsedAt: Option[Instant],
+                            expiresAt: Instant)
 
 /** 発行するアクセストークン（API トークン）. */
-final case class NewApiToken(
-  name: String,
-  prefix: String,
-  hash: Array[Byte],
-  scopes: List[String],
-  expiresAt: Instant)
+final case class NewApiToken(name: String, prefix: String, hash: Array[Byte], scopes: List[String], expiresAt: Instant)
 
 /** リフレッシュの結果. */
 enum RefreshResult {
@@ -50,8 +43,7 @@ enum RefreshResult {
 }
 
 /** 兄弟のサービスへの OAuth の連携（認可コード・連携・リフレッシュトークン）. */
-final class OAuthStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class OAuthStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   private val grantCols =
     fr"g.id, g.user_id, g.client_id, g.scopes, g.token_id, g.created_at, (select t.last_used_at from api_tokens t where t.id = g.token_id), g.expires_at"
@@ -59,11 +51,7 @@ final class OAuthStore(
   // ------------------------------------------------------------------ 認可コード
 
   /** 認可コードを保存する（ついでに期限切れのコードと連携を消す）. */
-  def createCode(
-    hash: Array[Byte],
-    c: OAuthCode,
-    expiresAt: Instant
-  ): IO[Unit] = tx(
+  def createCode(hash: Array[Byte], c: OAuthCode, expiresAt: Instant): IO[Unit] = tx(
     sql"delete from oauth_codes where expires_at < now()".update.run *>
       sql"delete from api_tokens where id in (select token_id from oauth_grants where expires_at < now())".update.run *>
       sql"""insert into oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scopes, expires_at)
@@ -71,10 +59,7 @@ final class OAuthStore(
   ).void
 
   /** 認可コードを使う（1回だけ. 期限切れなら None）. */
-  def consumeCode(
-    hash: Array[Byte],
-    now: Instant
-  ): IO[Option[OAuthCode]] = tx(
+  def consumeCode(hash: Array[Byte], now: Instant): IO[Option[OAuthCode]] = tx(
     sql"""delete from oauth_codes where code_hash = $hash returning client_id, user_id, redirect_uri, code_challenge, scopes, expires_at"""
       .query[(String, UUID, String, String, List[String], Instant)].option
   ).map(_.collect { case (c, u, r, ch, s, exp) if exp.isAfter(now) => OAuthCode(c, u, r, ch, s) })
@@ -82,14 +67,12 @@ final class OAuthStore(
   // ------------------------------------------------------------------ 連携
 
   /** 連携を作る（同じ利用者・クライアントの前の連携は、そのアクセストークンごと置き換える）. */
-  def replaceGrant(
-    userId: UUID,
-    clientId: String,
-    scopes: List[String],
-    token: NewApiToken,
-    refreshHash: Array[Byte],
-    expiresAt: Instant
-  ): IO[ApiToken] = tx(
+  def replaceGrant(userId: UUID,
+                   clientId: String,
+                   scopes: List[String],
+                   token: NewApiToken,
+                   refreshHash: Array[Byte],
+                   expiresAt: Instant): IO[ApiToken] = tx(
     for {
       _ <-
         sql"delete from api_tokens where id in (select token_id from oauth_grants where user_id = $userId and client_id = $clientId)".update.run
@@ -103,14 +86,12 @@ final class OAuthStore(
    * リフレッシュトークンで、アクセストークンとリフレッシュトークンを新しくする（前のものは使えなくなる）.
    * 1つ前のリフレッシュトークンが使われたら、盗まれた可能性があるので連携ごと消す.
    */
-  def refresh(
-    hash: Array[Byte],
-    clientId: String,
-    newRefresh: Array[Byte],
-    token: NewApiToken,
-    expiresAt: Instant,
-    now: Instant
-  ): IO[RefreshResult] = tx(
+  def refresh(hash: Array[Byte],
+              clientId: String,
+              newRefresh: Array[Byte],
+              token: NewApiToken,
+              expiresAt: Instant,
+              now: Instant): IO[RefreshResult] = tx(
     (fr"select" ++ grantCols ++ fr"from oauth_grants g where g.refresh_hash = $hash for update").query[
       OAuthGrant
     ].option.flatMap {
@@ -129,18 +110,13 @@ final class OAuthStore(
     }
   )
 
-  def grantsOf(
-    userId: UUID
-  ): IO[List[OAuthGrant]] =
+  def grantsOf(userId: UUID): IO[List[OAuthGrant]] =
     tx((fr"select" ++ grantCols ++ fr"from oauth_grants g where g.user_id = $userId order by g.created_at").query[
       OAuthGrant
     ].to[List])
 
   /** 連携をやめる（アクセストークンを消すと連携も消える）. */
-  def revoke(
-    userId: UUID,
-    clientId: String
-  ): IO[Boolean] =
+  def revoke(userId: UUID, clientId: String): IO[Boolean] =
     tx(
       sql"delete from api_tokens where id in (select token_id from oauth_grants where user_id = $userId and client_id = $clientId)".update.run.map(
         _ > 0
@@ -148,10 +124,7 @@ final class OAuthStore(
     )
 
   /** クライアントからの失効（RFC 7009. アクセストークン・リフレッシュトークンのどちらでも、その連携ごと）. */
-  def revokeByToken(
-    hash: Array[Byte],
-    clientId: String
-  ): IO[Unit] = tx(
+  def revokeByToken(hash: Array[Byte], clientId: String): IO[Unit] = tx(
     sql"""delete from api_tokens where id in (select g.token_id from oauth_grants g where g.client_id = $clientId
           and (g.refresh_hash = $hash or g.token_id = (select t.id from api_tokens t where t.token_hash = $hash)))""".update.run.void
   )

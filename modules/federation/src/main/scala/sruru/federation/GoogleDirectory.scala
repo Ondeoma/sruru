@@ -24,18 +24,14 @@ object GoogleDirectory {
   val DefaultTokenUri = "https://oauth2.googleapis.com/token"
 
   /** PKCS#8 の PEM（BEGIN PRIVATE KEY）の RSA 秘密鍵. */
-  def parsePem(
-    pem: String
-  ): Either[String, PrivateKey] = {
+  def parsePem(pem: String): Either[String, PrivateKey] = {
     val body = pem.linesIterator.map(_.trim).filterNot(l => l.startsWith("-----") || l.isEmpty).mkString
     Either.catchNonFatal {
       KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(Base64.getMimeDecoder.decode(body)))
     }.leftMap(_ => "秘密鍵（PKCS#8 の PEM）を読めません")
   }
 
-  def parseServiceAccount(
-    json: String
-  ): Either[String, ServiceAccount] =
+  def parseServiceAccount(json: String): Either[String, ServiceAccount] =
     for {
       j <- parse(json).leftMap(_ => "サービスアカウントの JSON を読めません")
       c = j.hcursor
@@ -57,21 +53,18 @@ object GoogleDirectory {
     yield ServiceAccount(email, kid, pk, pub, DefaultTokenUri)
 
   /** Google の web-safe base64（'*' の埋め草もある）. */
-  def decodeWebSafe(
-    s: String
-  ): Array[Byte] =
+  def decodeWebSafe(s: String): Array[Byte] =
     Base64.getUrlDecoder.decode(s.trim.replace('+', '-').replace('/', '_').reverse.dropWhile(c =>
       c == '=' || c == '*'
     ).reverse)
 }
 
 /** Google Workspace の Admin SDK Directory API（サービスアカウント + ドメイン全体の委任）. */
-final class GoogleDirectory(
-  http: Client[IO],
-  serviceAccountJson: String,
-  adminEmail: String,
-  customer: String = "my_customer",
-  adminBase: String = "https://admin.googleapis.com") extends DirectorySource {
+final class GoogleDirectory(http: Client[IO],
+                            serviceAccountJson: String,
+                            adminEmail: String,
+                            customer: String = "my_customer",
+                            adminBase: String = "https://admin.googleapis.com") extends DirectorySource {
   private lazy val account = GoogleDirectory.parseServiceAccount(serviceAccountJson)
 
   private val tokens = TokenCache(requestToken)
@@ -104,20 +97,10 @@ final class GoogleDirectory(
 
   private def base: IO[Uri] = HttpUtil.uri(adminBase.stripSuffix("/")).map(_ / "admin" / "directory" / "v1")
 
-  private def get(
-    token: String,
-    what: String
-  )(
-    u: Uri
-  ): IO[Json] =
+  private def get(token: String, what: String)(u: Uri): IO[Json] =
     HttpUtil.json(http, HttpUtil.bearer(Request[IO](Method.GET, u), token), what)
 
-  private def paged(
-    token: String,
-    what: String,
-    start: Uri,
-    items: String
-  ): IO[List[Json]] =
+  private def paged(token: String, what: String, start: Uri, items: String): IO[List[Json]] =
     HttpUtil.pages(start)(get(token, what))(
       Dir.list(_, items),
       j => Dir.str(j.hcursor, "nextPageToken").map(t => start.withQueryParam("pageToken", t))
@@ -142,10 +125,7 @@ final class GoogleDirectory(
         "groups"
       )
       groups <- gs.flatMap(g => Dir.str(g.hcursor, "id").map(_ -> g)).parTraverseN(Dir.Parallelism) {
-        (
-          id,
-          g
-        ) =>
+        (id, g) =>
           val u = (b / "groups" / id / "members").withQueryParams(Map(
             "maxResults" -> "200",
             "includeDerivedMembership" -> "true"
@@ -164,9 +144,7 @@ final class GoogleDirectory(
       }
     } yield DirSnapshot(users, groups)
 
-  def photo(
-    u: DirUser
-  ): IO[Option[(Array[Byte], String)]] =
+  def photo(u: DirUser): IO[Option[(Array[Byte], String)]] =
     if u.photoUrl.isEmpty then IO.pure(None)
     else
       for {

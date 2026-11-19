@@ -2,10 +2,7 @@ package sruru.api
 
 /** REST API の一覧（GET /api/endpoints・MCP の list_api_endpoints）. 型は modules/shared の Dto.scala. */
 object ApiCatalog {
-  final case class Endpoint(
-    method: String,
-    path: String,
-    description: String)
+  final case class Endpoint(method: String, path: String, description: String)
 
   val all: List[Endpoint] = List(
     // ---------------------------------------------------------------- 画面の設定・ログイン（ログインしていなくても使える）

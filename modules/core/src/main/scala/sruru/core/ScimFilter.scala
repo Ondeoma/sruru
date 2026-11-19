@@ -29,16 +29,10 @@ object ScimFilter {
   }
 
   /** urn は拡張スキーマ（urn:ietf:params:scim:schemas:extension:enterprise:2.0:User など）. */
-  final case class AttrPath(
-    urn: Option[String],
-    attr: String,
-    sub: Option[String])
+  final case class AttrPath(urn: Option[String], attr: String, sub: Option[String])
 
   /** PATCH のパス: emails[type eq "work"].value, members[value eq "…"], name.givenName */
-  final case class PatchPath(
-    attr: AttrPath,
-    filter: Option[Filter],
-    subAttr: Option[String])
+  final case class PatchPath(attr: AttrPath, filter: Option[Filter], subAttr: Option[String])
 
   // ------------------------------------------------------------------ 字句
 
@@ -50,9 +44,7 @@ object ScimFilter {
     case LParen, RParen, LBracket, RBracket
   }
 
-  private def lex(
-    s: String
-  ): Either[String, List[Tok]] = {
+  private def lex(s: String): Either[String, List[Tok]] = {
     val out = List.newBuilder[Tok]
     var i = 0
     while i < s.length do {
@@ -98,9 +90,7 @@ object ScimFilter {
 
   private val CompareOps = Set("eq", "ne", "co", "sw", "ew", "gt", "lt", "ge", "le")
 
-  def parseAttrPath(
-    s: String
-  ): Either[String, AttrPath] = {
+  def parseAttrPath(s: String): Either[String, AttrPath] = {
     val (urn, rest) =
       if s.toLowerCase.startsWith("urn:") then {
         val idx = s.lastIndexOf(':')
@@ -113,8 +103,7 @@ object ScimFilter {
     }
   }
 
-  private final class Parser(
-    var toks: List[Tok]) {
+  private final class Parser(var toks: List[Tok]) {
     def peekWord: Option[String] = toks.headOption.collect { case Tok.Word(w) => w.toLowerCase }
 
     def orExpr(): Either[String, Filter] =
@@ -148,9 +137,7 @@ object ScimFilter {
         }
       } else atom()
 
-    def expect(
-      t: Tok
-    ): Either[String, Unit] = toks match {
+    def expect(t: Tok): Either[String, Unit] = toks match {
       case `t` :: rest => toks = rest; Right(())
       case _ => Left(s"$t が必要です")
     }
@@ -195,38 +182,28 @@ object ScimFilter {
   val MaxLength = 4096
   val MaxDepth = 32
 
-  private def bounded(
-    s: String
-  ): Either[String, List[Tok]] =
+  private def bounded(s: String): Either[String, List[Tok]] =
     if s.length > MaxLength then Left(s"フィルターが長すぎます（$MaxLength 文字まで）")
     else
       lex(s).flatMap { ts =>
-        val depth = ts.scanLeft(0)(
-          (
-            d,
-            t
-          ) =>
-            t match {
-              case Tok.LParen | Tok.LBracket => d + 1
-              case Tok.RParen | Tok.RBracket => d - 1
-              case _ => d
-            }
+        val depth = ts.scanLeft(0)((d, t) =>
+          t match {
+            case Tok.LParen | Tok.LBracket => d + 1
+            case Tok.RParen | Tok.RBracket => d - 1
+            case _ => d
+          }
         ).max
         Either.cond(depth <= MaxDepth, ts, s"かっこが深すぎます（$MaxDepth 段まで）")
       }
 
-  def parse(
-    s: String
-  ): Either[String, Filter] =
+  def parse(s: String): Either[String, Filter] =
     bounded(s).flatMap { ts =>
       val p = new Parser(ts)
       p.orExpr().flatMap(f => if p.toks.isEmpty then Right(f) else Left("フィルターの後ろに余分な文字があります"))
     }
 
   /** PATCH のパス. */
-  def parsePatchPath(
-    s: String
-  ): Either[String, PatchPath] = {
+  def parsePatchPath(s: String): Either[String, PatchPath] = {
     val lb = s.indexOf('[')
     if lb < 0 then parseAttrPath(s).map(PatchPath(_, None, None))
     else {
@@ -244,17 +221,11 @@ object ScimFilter {
 
   // ------------------------------------------------------------------ 評価
 
-  private def field(
-    obj: Json,
-    name: String
-  ): Json =
+  private def field(obj: Json, name: String): Json =
     obj.asObject.flatMap(o => o.toIterable.find(_._1.equalsIgnoreCase(name)).map(_._2)).getOrElse(Json.Null)
 
   /** パスの値（複数値の属性は配列を展開した一覧）. */
-  def resolve(
-    res: Json,
-    p: AttrPath
-  ): List[Json] = {
+  def resolve(res: Json, p: AttrPath): List[Json] = {
     val base = p.urn.fold(res)(u => field(res, u))
     val top = field(base, p.attr)
     val items = top.asArray.map(_.toList).getOrElse(if top.isNull then Nil else List(top))
@@ -266,11 +237,7 @@ object ScimFilter {
     }
   }
 
-  private def cmp(
-    a: Json,
-    op: String,
-    v: Json
-  ): Boolean =
+  private def cmp(a: Json, op: String, v: Json): Boolean =
     (a.asString, v.asString) match {
       case (Some(x), Some(y)) =>
         val (l, r) = (x.toLowerCase, y.toLowerCase)
@@ -307,10 +274,7 @@ object ScimFilter {
         }
     }
 
-  def matches(
-    f: Filter,
-    res: Json
-  ): Boolean = f match {
+  def matches(f: Filter, res: Json): Boolean = f match {
     case Filter.And(a, b) => matches(a, res) && matches(b, res)
     case Filter.Or(a, b) => matches(a, res) || matches(b, res)
     case Filter.Not(x) => !matches(x, res)
@@ -326,9 +290,7 @@ object ScimFilter {
   }
 
   /** `attr eq "値"` の形なら (属性, 値)（DB で絞り込むため）. */
-  def simpleEq(
-    f: Filter
-  ): Option[(String, String)] = f match {
+  def simpleEq(f: Filter): Option[(String, String)] = f match {
     case Filter.Compare(AttrPath(None, a, sub), "eq", v) if v.isString =>
       Some((a + sub.fold("")("." + _)).toLowerCase -> v.asString.get)
     case _ => None

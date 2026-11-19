@@ -13,8 +13,7 @@ import doobie.postgres.implicits.*
 import java.util.UUID
 
 /** 外部の IdP と、外部のアカウントとの結び付き. */
-final class FederationStore(
-  xa: Transactor[IO]) extends TxStore(xa) {
+final class FederationStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   private val cols =
     fr"""id, slug, kind, name, enabled, issuer, client_id, client_secret_enc, scopes, subject_claim, jit, link_by_email,
@@ -22,18 +21,12 @@ final class FederationStore(
 
   def all: IO[List[FederationProvider]] =
     tx((fr"select" ++ cols ++ fr"from federation_providers order by name").query[FederationProvider].to[List])
-  def find(
-    id: UUID
-  ): IO[Option[FederationProvider]] =
+  def find(id: UUID): IO[Option[FederationProvider]] =
     tx((fr"select" ++ cols ++ fr"from federation_providers where id = $id").query[FederationProvider].option)
-  def bySlug(
-    slug: String
-  ): IO[Option[FederationProvider]] =
+  def bySlug(slug: String): IO[Option[FederationProvider]] =
     tx((fr"select" ++ cols ++ fr"from federation_providers where slug = $slug").query[FederationProvider].option)
 
-  def create(
-    p: FederationProvider
-  ): IO[Either[AppError, FederationProvider]] = tx(
+  def create(p: FederationProvider): IO[Either[AppError, FederationProvider]] = tx(
     sql"select exists(select 1 from federation_providers where slug = ${p.slug})".query[Boolean].unique.flatMap {
       case true => fail(AppError(ErrorCode.ProviderSlugTaken, s"スラッグ「${p.slug}」は使われています"))
       case false =>
@@ -45,9 +38,7 @@ final class FederationStore(
     }
   )
 
-  def save(
-    p: FederationProvider
-  ): IO[Either[AppError, Unit]] = tx(
+  def save(p: FederationProvider): IO[Either[AppError, Unit]] = tx(
     sql"select exists(select 1 from federation_providers where slug = ${p.slug} and id <> ${p.id})".query[
       Boolean
     ].unique.flatMap {
@@ -62,39 +53,24 @@ final class FederationStore(
     }
   )
 
-  def delete(
-    id: UUID
-  ): IO[Boolean] = tx(sql"delete from federation_providers where id = $id".update.run.map(_ > 0))
+  def delete(id: UUID): IO[Boolean] = tx(sql"delete from federation_providers where id = $id".update.run.map(_ > 0))
 
-  def recordSync(
-    id: UUID,
-    result: String
-  ): IO[Unit] =
+  def recordSync(id: UUID, result: String): IO[Unit] =
     tx(
       sql"update federation_providers set last_sync_at = now(), last_sync_result = $result where id = $id".update.run.void
     )
 
-  def identity(
-    providerId: UUID,
-    subject: String
-  ): IO[Option[FederatedIdentity]] = tx(
+  def identity(providerId: UUID, subject: String): IO[Option[FederatedIdentity]] = tx(
     sql"""select provider_id, subject, user_id, email, created_at, last_login_at from federated_identities
           where provider_id = $providerId and subject = $subject""".query[FederatedIdentity].option
   )
 
-  def identitiesOf(
-    userId: UUID
-  ): IO[List[FederatedIdentity]] = tx(
-    sql"select provider_id, subject, user_id, email, created_at, last_login_at from federated_identities where user_id = $userId"
-      .query[FederatedIdentity].to[List]
-  )
+  def identitiesOf(userId: UUID): IO[List[FederatedIdentity]] =
+    tx(sql"select provider_id, subject, user_id, email, created_at, last_login_at from federated_identities where user_id = $userId".query[
+      FederatedIdentity
+    ].to[List])
 
-  def link(
-    providerId: UUID,
-    subject: String,
-    userId: UUID,
-    email: Option[String]
-  ): IO[Unit] = tx(
+  def link(providerId: UUID, subject: String, userId: UUID, email: Option[String]): IO[Unit] = tx(
     sql"""insert into federated_identities (provider_id, subject, user_id, email, last_login_at) values ($providerId, $subject, $userId, $email, now())
           on conflict (provider_id, subject) do update set user_id = excluded.user_id, email = excluded.email, last_login_at = now()""".update.run.void
   )

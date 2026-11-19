@@ -20,14 +20,13 @@ import sruru.db.*
 import java.util.UUID
 
 /** SCIM 2.0（RFC 7643・7644）のサービスプロバイダ. 認証は scim（または admin）スコープの API トークン. */
-final class ScimRoutes(
-  dir: Directory,
-  sessions: SessionStore,
-  tokens: TokenStore,
-  policies: PolicyService,
-  audit: AuditService,
-  val auth: SessionAuth,
-  cfg: ApiConfig) extends RouteSupport {
+final class ScimRoutes(dir: Directory,
+                       sessions: SessionStore,
+                       tokens: TokenStore,
+                       policies: PolicyService,
+                       audit: AuditService,
+                       val auth: SessionAuth,
+                       cfg: ApiConfig) extends RouteSupport {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "scim" / "v2" / "ServiceProviderConfig" => getScimV2ServiceProviderConfig(req)
@@ -47,49 +46,30 @@ final class ScimRoutes(
     case req @ DELETE -> Root / "scim" / "v2" / "Groups" / id => deleteScimV2Group(req, id)
   }
 
-  private def getScimV2ServiceProviderConfig(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getScimV2ServiceProviderConfig(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(_ => scim(Status.Ok, serviceProviderConfig))
 
-  private def getScimV2ResourceTypes(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getScimV2ResourceTypes(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(_ => scim(Status.Ok, listResponse(resourceTypes, resourceTypes.size, 1)))
 
-  private def getScimV2Schemas(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getScimV2Schemas(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(_ => schemas.flatMap(s => scim(Status.Ok, listResponse(s, s.size, 1))))
 
-  private def getScimV2Users(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getScimV2Users(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(_ => listUsers(req))
 
-  private def postScimV2Users(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postScimV2Users(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(p => jsonBody(req)(j => saveUser(p, req, None, j, "scim.user.create")))
 
-  private def getScimV2User(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def getScimV2User(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(_ => withUser(id)(u => userOut(u).flatMap(scim(Status.Ok, _))))
 
-  private def putScimV2User(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def putScimV2User(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableUser(id)(u => jsonBody(req)(j => saveUser(p, req, Some(u), j, "scim.user.replace")))
     )
 
-  private def patchScimV2User(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def patchScimV2User(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableUser(id)(u =>
         jsonBody(req) { j =>
@@ -103,10 +83,7 @@ final class ScimRoutes(
       )
     )
 
-  private def deleteScimV2User(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def deleteScimV2User(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableUser(id)(u =>
         dir.revokeSessions(u.id) *> dir.users.delete(u.id) *>
@@ -114,9 +91,7 @@ final class ScimRoutes(
       )
     )
 
-  private def getScimV2Groups(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def getScimV2Groups(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req) { _ =>
       q(req, "filter").traverse(ScimFilter.parse) match {
         case Left(e) => scimErr(ErrorCode.ScimFilterInvalid, e, Some("invalidFilter"))
@@ -127,10 +102,7 @@ final class ScimRoutes(
             dir.groups.all,
             if excluded then IO.pure(Map.empty[UUID, List[UUID]]) else dir.groups.allMembers
           ).flatMapN {
-            (
-              gs,
-              members
-            ) =>
+            (gs, members) =>
               dir.users.findMany(members.values.flatten.toList.distinct).map { us =>
                 val byId = us.map(u => u.id -> u).toMap
                 gs.map(g =>
@@ -145,29 +117,18 @@ final class ScimRoutes(
       }
     }
 
-  private def postScimV2Groups(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def postScimV2Groups(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req)(p => jsonBody(req)(j => saveGroup(p, req, None, j, "scim.group.create")))
 
-  private def getScimV2Group(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def getScimV2Group(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(_ => withGroup(id)(g => groupOut(g).flatMap(scim(Status.Ok, _))))
 
-  private def putScimV2Group(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def putScimV2Group(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableGroup(id)(g => jsonBody(req)(j => saveGroup(p, req, Some(g), j, "scim.group.replace")))
     )
 
-  private def patchScimV2Group(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def patchScimV2Group(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableGroup(id)(g =>
         jsonBody(req) { j =>
@@ -181,10 +142,7 @@ final class ScimRoutes(
       )
     )
 
-  private def deleteScimV2Group(
-    req: Request[IO],
-    id: String
-  ): IO[Response[IO]] =
+  private def deleteScimV2Group(req: Request[IO], id: String): IO[Response[IO]] =
     scimAuth(req)(p =>
       withWritableGroup(id)(g =>
         dir.groups.delete(g.id) *>
@@ -201,18 +159,13 @@ final class ScimRoutes(
   private val PatchSchema = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
   private val ScimType = `Content-Type`(new MediaType("application", "scim+json"), Charset.`UTF-8`)
 
-  private def scim(
-    status: Status,
-    j: Json
-  ): IO[Response[IO]] =
+  private def scim(status: Status, j: Json): IO[Response[IO]] =
     IO.pure(Response[IO](status).withEntity(j.dropNullValues).withContentType(ScimType))
 
   /** SCIM の形式のエラーの応答（コード付きでログに出る. 本文は SCIM の決まりどおり）. */
-  private def scimErr(
-    code: ErrorCode,
-    detail: String | Null = null,
-    scimType: Option[String] = None
-  ): IO[Response[IO]] = {
+  private def scimErr(code: ErrorCode,
+                      detail: String | Null = null,
+                      scimType: Option[String] = None): IO[Response[IO]] = {
     val e = AppError(code, Option(detail))
     Errors.log(e) *> scim(
       Status.fromInt(code.status).getOrElse(Status.BadRequest),
@@ -226,11 +179,7 @@ final class ScimRoutes(
   }
 
   /** SCIM の要求の認証. 要求ごとにスパンと sruru.scim.requests（method・resource・status）を残す（本文は載せない）. */
-  private def scimAuth(
-    req: Request[IO]
-  )(
-    f: Principal => IO[Response[IO]]
-  ): IO[Response[IO]] = {
+  private def scimAuth(req: Request[IO])(f: Principal => IO[Response[IO]]): IO[Response[IO]] = {
     val resource = req.pathInfo.segments.drop(2).headOption.map(_.decoded()).getOrElse("")
     sbirds.observe.Telemetry.span("scim.request", "scim.resource" -> resource)(
       auth.principal(req).flatMap {
@@ -251,11 +200,7 @@ final class ScimRoutes(
     )
   }
 
-  private def jsonBody(
-    req: Request[IO]
-  )(
-    f: Json => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def jsonBody(req: Request[IO])(f: Json => IO[Response[IO]]): IO[Response[IO]] =
     req.bodyText.compile.string.flatMap(s =>
       io.circe.parser.parse(s) match {
         case Left(_) => scimErr(ErrorCode.ScimJsonUnreadable, scimType = Some("invalidSyntax"))
@@ -263,27 +208,15 @@ final class ScimRoutes(
       }
     )
 
-  private def ctxOf(
-    req: Request[IO]
-  ): IO[ReqCtx] = auth.reqCtx(req)
+  private def ctxOf(req: Request[IO]): IO[ReqCtx] = auth.reqCtx(req)
 
   // ------------------------------------------------------------------ ユーザー
 
-  private def userJson(
-    u: User,
-    m: Membership,
-    defs: List[AttributeDef],
-    pic: Option[String]
-  ): Json = {
+  private def userJson(u: User, m: Membership, defs: List[AttributeDef], pic: Option[String]): Json = {
     val ent = defs.flatMap(d =>
       d.scimPath.filter(_.startsWith(Enterprise + ":")).map(p => p.drop(Enterprise.length + 1) -> d.key)
     )
-      .flatMap(
-        (
-          name,
-          key
-        ) => u.attributes.hcursor.downField(key).focus.filterNot(_.isNull).map(name -> _)
-      )
+      .flatMap((name, key) => u.attributes.hcursor.downField(key).focus.filterNot(_.isNull).map(name -> _))
     Json.obj(
       "schemas" -> (List(UserSchema, Enterprise, SruruExt)).asJson,
       "id" -> u.id.toString.asJson,
@@ -321,23 +254,11 @@ final class ScimRoutes(
     )
   }
 
-  private def str(
-    j: Json,
-    path: String*
-  ): Option[String] =
-    path.foldLeft(j)(
-      (
-        x,
-        k
-      ) => ScimJson.get(x, k)
-    ).asString.map(_.trim).filter(_.nonEmpty)
+  private def str(j: Json, path: String*): Option[String] =
+    path.foldLeft(j)((x, k) => ScimJson.get(x, k)).asString.map(_.trim).filter(_.nonEmpty)
 
   /** SCIM の JSON をユーザーに反映する. */
-  private def applyUser(
-    u: User,
-    j: Json,
-    defs: List[AttributeDef]
-  ): Either[String, User] = {
+  private def applyUser(u: User, j: Json, defs: List[AttributeDef]): Either[String, User] = {
     val emails = ScimJson.get(j, "emails").asArray.map(_.toList).getOrElse(Nil)
     val email =
       emails.find(e => ScimJson.get(e, "primary").asBoolean.contains(true)).orElse(emails.headOption).flatMap(str(
@@ -355,12 +276,7 @@ final class ScimRoutes(
     val extAttrs =
       ScimJson.get(ScimJson.get(j, SruruExt), "attributes").asObject.map(Json.fromJsonObject).getOrElse(Json.obj())
     // マネージャーなどオブジェクトの値は value を使う
-    val flat = entAttrs.map(
-      (
-        k,
-        v
-      ) => k -> (if v.isObject then ScimJson.get(v, "value") else v)
-    )
+    val flat = entAttrs.map((k, v) => k -> (if v.isObject then ScimJson.get(v, "value") else v))
     for {
       name <- str(j, "userName").toRight("userName が必要です").flatMap(dir.validUsername)
       mail <- dir.validEmail(email)
@@ -421,28 +337,16 @@ final class ScimRoutes(
     )
   }
 
-  private def userOut(
-    u: User
-  ): IO[Json] = usersOut(List(u)).map(_.head)
+  private def userOut(u: User): IO[Json] = usersOut(List(u)).map(_.head)
 
   /** まとめて変換する（所属・属性の定義・設定をまとめて読む）. */
-  private def usersOut(
-    us: List[User]
-  ): IO[List[Json]] =
+  private def usersOut(us: List[User]): IO[List[Json]] =
     (dir.groups.memberships(us.map(_.id)), dir.users.attributeDefs, policies.get).mapN {
-      (
-        ms,
-        defs,
-        p
-      ) =>
+      (ms, defs, p) =>
         us.map(u => userJson(u, ms.getOrElse(u.id, Membership(Nil)), defs, dir.pictureUrl(u, p.branding.gravatar)))
     }
 
-  private def listResponse(
-    items: List[Json],
-    total: Int,
-    start: Int
-  ): Json =
+  private def listResponse(items: List[Json], total: Int, start: Int): Json =
     Json.obj(
       "schemas" -> List(ListSchema).asJson,
       "totalResults" -> total.asJson,
@@ -451,17 +355,13 @@ final class ScimRoutes(
       "Resources" -> items.asJson
     )
 
-  private def paging(
-    req: Request[IO]
-  ): (Int, Int) =
+  private def paging(req: Request[IO]): (Int, Int) =
     (
       q(req, "startIndex").flatMap(_.toIntOption).map(math.max(1, _)).getOrElse(1),
       q(req, "count").flatMap(_.toIntOption).map(n => math.max(0, math.min(n, 1000))).getOrElse(100)
     )
 
-  private def listUsers(
-    req: Request[IO]
-  ): IO[Response[IO]] =
+  private def listUsers(req: Request[IO]): IO[Response[IO]] =
     q(req, "filter").traverse(ScimFilter.parse) match {
       case Left(e) => scimErr(ErrorCode.ScimFilterInvalid, e, Some("invalidFilter"))
       case Right(filter) =>
@@ -477,13 +377,7 @@ final class ScimRoutes(
         }
     }
 
-  private def saveUser(
-    p: Principal,
-    req: Request[IO],
-    prev: Option[User],
-    j: Json,
-    action: String
-  ): IO[Response[IO]] =
+  private def saveUser(p: Principal, req: Request[IO], prev: Option[User], j: Json, action: String): IO[Response[IO]] =
     dir.users.attributeDefs.flatMap { defs =>
       applyUser(prev.getOrElse(blankUser), j, defs) match {
         case Left(e) => scimErr(ErrorCode.ScimValueInvalid, e, Some("invalidValue"))
@@ -525,28 +419,18 @@ final class ScimRoutes(
       }
     }
 
-  private def withUser(
-    id: String
-  )(
-    f: User => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withUser(id: String)(f: User => IO[Response[IO]]): IO[Response[IO]] =
     uuidParam(id).fold(IO.pure(Option.empty[User]))(dir.users.find).flatMap {
       case Some(u) if !u.isService => f(u)
       case _ => scimErr(ErrorCode.ScimUserNotFound, s"ユーザー $id が見つかりません")
     }
 
-  private def patch(
-    j: Json,
-    base: Json
-  ): Either[String, Json] =
+  private def patch(j: Json, base: Json): Either[String, Json] =
     ScimJson.get(
       j,
       "Operations"
     ).asArray.toRight("Operations がありません").flatMap(_.toList.foldLeft[Either[String, Json]](Right(base)) {
-      (
-        acc,
-        op
-      ) =>
+      (acc, op) =>
         acc.flatMap(r =>
           ScimJson.applyOp(r, str(op, "op").getOrElse("").toLowerCase, str(op, "path"), ScimJson.get(op, "value"))
         )
@@ -554,10 +438,7 @@ final class ScimRoutes(
 
   // ------------------------------------------------------------------ グループ
 
-  private def groupJson(
-    g: Group,
-    members: List[User]
-  ): Json =
+  private def groupJson(g: Group, members: List[User]): Json =
     Json.obj(
       "schemas" -> List(GroupSchema).asJson,
       "id" -> g.id.toString.asJson,
@@ -578,22 +459,16 @@ final class ScimRoutes(
       )
     )
 
-  private def groupOut(
-    g: Group
-  ): IO[Json] = dir.groups.members(g.id).flatMap(dir.users.findMany).map(groupJson(g, _))
+  private def groupOut(g: Group): IO[Json] = dir.groups.members(g.id).flatMap(dir.users.findMany).map(groupJson(g, _))
 
-  private def memberIds(
-    j: Json
-  ): List[UUID] =
+  private def memberIds(j: Json): List[UUID] =
     ScimJson.get(j, "members").asArray.toList.flatten.flatMap(m => str(m, "value")).flatMap(uuidParam)
 
-  private def saveGroup(
-    p: Principal,
-    req: Request[IO],
-    prev: Option[Group],
-    j: Json,
-    action: String
-  ): IO[Response[IO]] =
+  private def saveGroup(p: Principal,
+                        req: Request[IO],
+                        prev: Option[Group],
+                        j: Json,
+                        action: String): IO[Response[IO]] =
     str(j, "displayName") match {
       case None => scimErr(ErrorCode.ScimDisplayNameRequired, scimType = Some("invalidValue"))
       case Some(name) =>
@@ -607,10 +482,7 @@ final class ScimRoutes(
           case Right(g) =>
             val ids = memberIds(j)
             (dir.users.findMany(ids), dir.groups.members(g.id)).tupled.flatMap {
-              (
-                requested,
-                current
-              ) =>
+              (requested, current) =>
                 // 管理者の所属は SCIM では変えない（加えも外しもしない. 漏れた SCIM のトークンで管理者を締め出したり、権限を変えたりさせない）
                 val touched = (requested.map(_.id) ++ current).distinct
                 dir.users.findMany(touched).flatMap(
@@ -635,11 +507,7 @@ final class ScimRoutes(
     }
 
   /** 変更してよいユーザー（管理者は SCIM では変えない. 漏れた SCIM のトークンで管理者を乗っ取ったり締め出したりできないように）. */
-  private def withWritableUser(
-    id: String
-  )(
-    f: User => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withWritableUser(id: String)(f: User => IO[Response[IO]]): IO[Response[IO]] =
     withUser(id)(u =>
       dir.membership(u).flatMap(m =>
         if dir.isAdmin(u, m) then scimErr(ErrorCode.ScimAdminUserImmutable, scimType = Some("mutability")) else f(u)
@@ -647,11 +515,7 @@ final class ScimRoutes(
     )
 
   /** 変更してよいグループ（管理者になるグループは SCIM では変えない）. */
-  private def withWritableGroup(
-    id: String
-  )(
-    f: Group => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withWritableGroup(id: String)(f: Group => IO[Response[IO]]): IO[Response[IO]] =
     withGroup(id)(g =>
       dir.groups.all.flatMap(all =>
         if Membership.expand(List(g.id), all.map(x => x.id -> x).toMap).isAdmin then
@@ -660,11 +524,7 @@ final class ScimRoutes(
       )
     )
 
-  private def withGroup(
-    id: String
-  )(
-    f: Group => IO[Response[IO]]
-  ): IO[Response[IO]] =
+  private def withGroup(id: String)(f: Group => IO[Response[IO]]): IO[Response[IO]] =
     uuidParam(id).fold(IO.pure(Option.empty[Group]))(dir.groups.find).flatMap(_.fold(scimErr(
       ErrorCode.ScimGroupNotFound,
       s"グループ $id が見つかりません"
@@ -712,13 +572,11 @@ final class ScimRoutes(
     )
   )
 
-  private def attr(
-    name: String,
-    typ: String = "string",
-    multi: Boolean = false,
-    sub: List[Json] = Nil,
-    required: Boolean = false
-  ): Json =
+  private def attr(name: String,
+                   typ: String = "string",
+                   multi: Boolean = false,
+                   sub: List[Json] = Nil,
+                   required: Boolean = false): Json =
     Json.obj(
       "name" -> name.asJson,
       "type" -> typ.asJson,

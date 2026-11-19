@@ -15,53 +15,46 @@ import scala.util.Try
 
 import Xml.*
 
-final case class AuthnRequest(
-  id: String,
-  issuer: String,
-  acsUrl: Option[String],
-  protocolBinding: Option[String],
-  forceAuthn: Boolean,
-  isPassive: Boolean,
-  nameIdFormat: Option[String],
-  destination: Option[String],
-  issueInstant: Instant)
+final case class AuthnRequest(id: String,
+                              issuer: String,
+                              acsUrl: Option[String],
+                              protocolBinding: Option[String],
+                              forceAuthn: Boolean,
+                              isPassive: Boolean,
+                              nameIdFormat: Option[String],
+                              destination: Option[String],
+                              issueInstant: Instant)
 
-final case class LogoutRequest(
-  id: String,
-  issuer: String,
-  nameId: Option[String],
-  sessionIndexes: List[String],
-  destination: Option[String],
-  issueInstant: Instant)
+final case class LogoutRequest(id: String,
+                               issuer: String,
+                               nameId: Option[String],
+                               sessionIndexes: List[String],
+                               destination: Option[String],
+                               issueInstant: Instant)
 
-final case class SamlAttribute(
-  name: String,
-  friendlyName: Option[String],
-  values: List[String])
+final case class SamlAttribute(name: String, friendlyName: Option[String], values: List[String])
 
-final case class AssertionParams(
-  idpEntityId: String,
-  spEntityId: String,
-  acsUrl: String,
-  inResponseTo: Option[String],
-  nameId: String,
-  nameIdFormat: String,
-  sessionIndex: String,
-  authnInstant: Instant,
-  authnContextClassRef: String,
-  attributes: List[SamlAttribute],
-  now: Instant,
-  validSeconds: Int,
-  sessionNotOnOrAfter: Option[Instant],
-  signResponse: Boolean,
-  signAssertion: Boolean)
+final case class AssertionParams(idpEntityId: String,
+                                 spEntityId: String,
+                                 acsUrl: String,
+                                 inResponseTo: Option[String],
+                                 nameId: String,
+                                 nameIdFormat: String,
+                                 sessionIndex: String,
+                                 authnInstant: Instant,
+                                 authnContextClassRef: String,
+                                 attributes: List[SamlAttribute],
+                                 now: Instant,
+                                 validSeconds: Int,
+                                 sessionNotOnOrAfter: Option[Instant],
+                                 signResponse: Boolean,
+                                 signAssertion: Boolean)
 
-final case class SpMetadata(
-  entityId: String,
-  acsUrl: Option[String],
-  acsBinding: Option[String],
-  sloUrl: Option[String],
-  certificatePem: Option[String])
+final case class SpMetadata(entityId: String,
+                            acsUrl: Option[String],
+                            acsBinding: Option[String],
+                            sloUrl: Option[String],
+                            certificatePem: Option[String])
 
 /** SAML 2.0 の IdP の処理（HTTP には依存しない）. */
 object Saml {
@@ -92,16 +85,12 @@ object Saml {
 
   // ------------------------------------------------------------------ バインディング
 
-  private def b64decode(
-    s: String
-  ): Either[String, Array[Byte]] =
+  private def b64decode(s: String): Either[String, Array[Byte]] =
     if s.length > MaxXmlChars * 2 then Left("SAMLRequest が大きすぎます")
     else Try(Base64.getMimeDecoder.decode(s.trim.replace(' ', '+'))).toEither.left.map(_ => "SAMLRequest を読めません")
 
   /** HTTP-Redirect: base64 を戻して DEFLATE を展開する（値は URL デコード済みのもの）. */
-  def decodeRedirect(
-    param: String
-  ): Either[String, String] =
+  def decodeRedirect(param: String): Either[String, String] =
     b64decode(param).flatMap { bytes =>
       Try {
         val inf = new Inflater(true)
@@ -121,15 +110,11 @@ object Saml {
     }
 
   /** HTTP-POST: base64 を戻す. */
-  def decodePost(
-    param: String
-  ): Either[String, String] =
+  def decodePost(param: String): Either[String, String] =
     b64decode(param).map(b => new String(b, StandardCharsets.UTF_8)).filterOrElse(_.nonEmpty, "SAMLRequest を読めません")
 
   /** DEFLATE して base64 にする（URL エンコードは呼び出し側で行う）. */
-  def encodeRedirect(
-    xml: String
-  ): String = {
+  def encodeRedirect(xml: String): String = {
     val d = new Deflater(Deflater.DEFLATED, true)
     try {
       d.setInput(xml.getBytes(StandardCharsets.UTF_8))
@@ -143,39 +128,27 @@ object Saml {
 
   // ------------------------------------------------------------------ 要求の解析
 
-  private def root(
-    xml: String,
-    local: String
-  ): Either[String, Element] =
+  private def root(xml: String, local: String): Either[String, Element] =
     parse(xml).flatMap { doc =>
       val r = doc.getDocumentElement
       if r.getNamespaceURI == Protocol && r.getLocalName == local then Right(r)
       else Left(s"$local ではありません")
     }
 
-  private def issuerOf(
-    r: Element
-  ): Either[String, String] =
+  private def issuerOf(r: Element): Either[String, String] =
     child(r, Assertion, "Issuer").map(text).filter(_.nonEmpty).toRight("Issuer がありません")
 
   /** ID と発行時刻（どちらも必須）. */
-  private def common(
-    r: Element
-  ): Either[String, (String, Instant)] =
+  private def common(r: Element): Either[String, (String, Instant)] =
     for {
       id <- attr(r, "ID").toRight("ID がありません")
       _ <- Either.cond(attr(r, "Version").contains("2.0"), (), "SAML 2.0 ではありません")
       ii <- attr(r, "IssueInstant").flatMap(parseInstant).toRight("IssueInstant がないか不正です")
     } yield (id, ii)
 
-  private def bool(
-    r: Element,
-    name: String
-  ): Boolean = attr(r, name).exists(v => v == "true" || v == "1")
+  private def bool(r: Element, name: String): Boolean = attr(r, name).exists(v => v == "true" || v == "1")
 
-  def parseAuthnRequest(
-    xml: String
-  ): Either[String, AuthnRequest] =
+  def parseAuthnRequest(xml: String): Either[String, AuthnRequest] =
     for {
       r <- root(xml, "AuthnRequest")
       idIi <- common(r)
@@ -193,9 +166,7 @@ object Saml {
       issueInstant = ii
     )
 
-  def parseLogoutRequest(
-    xml: String
-  ): Either[String, LogoutRequest] =
+  def parseLogoutRequest(xml: String): Either[String, LogoutRequest] =
     for {
       r <- root(xml, "LogoutRequest")
       idIi <- common(r)
@@ -212,9 +183,7 @@ object Saml {
 
   // ------------------------------------------------------------------ 署名の検証
 
-  private def redirectAlg(
-    uri: String
-  ): Option[List[String]] = uri match {
+  private def redirectAlg(uri: String): Option[List[String]] = uri match {
     case "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" => Some(List("SHA256withRSA"))
     case "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384" => Some(List("SHA384withRSA"))
     case "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512" => Some(List("SHA512withRSA"))
@@ -224,54 +193,33 @@ object Saml {
     case _ => None
   }
 
-  private def urlDecode(
-    s: String
-  ): String = URLDecoder.decode(s, StandardCharsets.UTF_8)
+  private def urlDecode(s: String): String = URLDecoder.decode(s, StandardCharsets.UTF_8)
 
   /**
    * HTTP-Redirect のクエリを (復号したキー, 受け取ったままの値) に分ける. キーの重複は拒否する
    * （SAML%52equest のように符号化したキーで、検証する値と処理する値をすり替えられないように）.
    */
-  private def rawPairs(
-    rawQuery: String
-  ): Either[String, List[(String, String)]] = {
+  private def rawPairs(rawQuery: String): Either[String, List[(String, String)]] = {
     val pairs = rawQuery.split('&').toList.filter(_.nonEmpty).map { p =>
       val i = p.indexOf('=')
       if i < 0 then (p, "") else (p.take(i), p.drop(i + 1))
     }
-    Try(pairs.map(
-      (
-        k,
-        v
-      ) => (urlDecode(k), v)
-    )).toEither.left.map(_ => "クエリを読めません").flatMap { ps =>
+    Try(pairs.map((k, v) => (urlDecode(k), v))).toEither.left.map(_ => "クエリを読めません").flatMap { ps =>
       ps.groupBy(_._1).collectFirst { case (k, vs) if vs.size > 1 => k }.toLeft(ps)
         .left.map(k => s"$k が重複しています")
     }
   }
 
   /** HTTP-Redirect のクエリの値（キーの重複は拒否する）. 署名を検証した値と同じものを使うこと. */
-  def redirectParams(
-    rawQuery: String
-  ): Either[String, Map[String, String]] =
+  def redirectParams(rawQuery: String): Either[String, Map[String, String]] =
     rawPairs(rawQuery).flatMap(ps =>
-      Try(ps.map(
-        (
-          k,
-          v
-        ) => k -> urlDecode(v)
-      ).toMap).toEither.left.map(_ => "クエリを読めません")
+      Try(ps.map((k, v) => k -> urlDecode(v)).toMap).toEither.left.map(_ => "クエリを読めません")
     )
 
   /** HTTP-Redirect の署名を検証する（クエリは受け取ったままの URL エンコードされた文字列）. */
-  def verifyRedirectSignature(
-    rawQuery: String,
-    cert: X509Certificate
-  ): Either[String, Unit] = {
-    def one(
-      pairs: List[(String, String)],
-      k: String
-    ): Either[String, Option[String]] = Right(pairs.find(_._1 == k).map(_._2))
+  def verifyRedirectSignature(rawQuery: String, cert: X509Certificate): Either[String, Unit] = {
+    def one(pairs: List[(String, String)], k: String): Either[String, Option[String]] =
+      Right(pairs.find(_._1 == k).map(_._2))
     for {
       pairs <- rawPairs(rawQuery)
       req <- one(pairs, "SAMLRequest")
@@ -302,31 +250,21 @@ object Saml {
   }
 
   /** HTTP-POST の XML のルート要素の enveloped 署名を検証する（KeyInfo は使わない）. */
-  def verifyPostSignature(
-    xml: String,
-    cert: X509Certificate
-  ): Either[String, Unit] =
+  def verifyPostSignature(xml: String, cert: X509Certificate): Either[String, Unit] =
     parse(xml).flatMap(d => verifyElementSignature(d.getDocumentElement, cert))
 
   /** 要素の直下の enveloped 署名を検証する（参照先はその要素自身に限る）. */
-  def verifyElementSignature(
-    el: Element,
-    cert: X509Certificate
-  ): Either[String, Unit] = Xml.verify(el, cert)
+  def verifyElementSignature(el: Element, cert: X509Certificate): Either[String, Unit] = Xml.verify(el, cert)
 
   // ------------------------------------------------------------------ 応答の作成
 
-  private def issuer(
-    doc: Document,
-    entityId: String
-  ): Element = el(doc, Assertion, "saml:Issuer", text = Some(entityId))()
+  private def issuer(doc: Document, entityId: String): Element =
+    el(doc, Assertion, "saml:Issuer", text = Some(entityId))()
 
-  private def status(
-    doc: Document,
-    code: String,
-    sub: Option[String] = None,
-    message: Option[String] = None
-  ): Element = {
+  private def status(doc: Document,
+                     code: String,
+                     sub: Option[String] = None,
+                     message: Option[String] = None): Element = {
     val sc = el(doc, Protocol, "samlp:StatusCode", Seq("Value" -> code))(sub.map(s =>
       el(doc, Protocol, "samlp:StatusCode", Seq("Value" -> s))()
     ).toList*)
@@ -336,13 +274,11 @@ object Saml {
   }
 
   /** samlp:Response 等のルートを作る. */
-  private def protocolRoot(
-    doc: Document,
-    local: String,
-    destination: String,
-    inResponseTo: Option[String],
-    now: Instant
-  ): Element = {
+  private def protocolRoot(doc: Document,
+                           local: String,
+                           destination: String,
+                           inResponseTo: Option[String],
+                           now: Instant): Element = {
     val r = el(
       doc,
       Protocol,
@@ -356,10 +292,7 @@ object Saml {
     r
   }
 
-  private def assertion(
-    doc: Document,
-    p: AssertionParams
-  ): Element = {
+  private def assertion(doc: Document, p: AssertionParams): Element = {
     val until = instant(p.now.plusSeconds(p.validSeconds.toLong))
     val a =
       el(doc, Assertion, "saml:Assertion", Seq("ID" -> newId(), "Version" -> "2.0", "IssueInstant" -> instant(p.now)))(
@@ -386,11 +319,11 @@ object Saml {
           "saml:AuthnStatement",
           Seq("AuthnInstant" -> instant(p.authnInstant), "SessionIndex" -> p.sessionIndex) ++
             p.sessionNotOnOrAfter.map(i => "SessionNotOnOrAfter" -> instant(i)).toList
-        )(
-          el(doc, Assertion, "saml:AuthnContext")(
-            el(doc, Assertion, "saml:AuthnContextClassRef", text = Some(p.authnContextClassRef))()
-          )
-        )
+        )(el(
+          doc,
+          Assertion,
+          "saml:AuthnContext"
+        )(el(doc, Assertion, "saml:AuthnContextClassRef", text = Some(p.authnContextClassRef))()))
       )
     declare(a, "saml", Assertion)
     declare(a, "xs", XS)
@@ -416,11 +349,7 @@ object Saml {
   }
 
   /** 認証の応答（Assertion を1つ含む samlp:Response）. */
-  def buildResponse(
-    p: AssertionParams,
-    key: PrivateKey,
-    cert: X509Certificate
-  ): String = {
+  def buildResponse(p: AssertionParams, key: PrivateKey, cert: X509Certificate): String = {
     val doc = newDocument()
     val r = protocolRoot(doc, "Response", p.acsUrl, p.inResponseTo, p.now)
     val iss = r.appendChild(issuer(doc, p.idpEntityId)).asInstanceOf[Element]
@@ -433,17 +362,15 @@ object Saml {
   }
 
   /** エラーの応答（署名付き）. */
-  def buildErrorResponse(
-    idpEntityId: String,
-    acsUrl: String,
-    inResponseTo: Option[String],
-    statusCode: String,
-    subStatus: Option[String],
-    message: Option[String],
-    now: Instant,
-    key: PrivateKey,
-    cert: X509Certificate
-  ): String = {
+  def buildErrorResponse(idpEntityId: String,
+                         acsUrl: String,
+                         inResponseTo: Option[String],
+                         statusCode: String,
+                         subStatus: Option[String],
+                         message: Option[String],
+                         now: Instant,
+                         key: PrivateKey,
+                         cert: X509Certificate): String = {
     val doc = newDocument()
     val r = protocolRoot(doc, "Response", acsUrl, inResponseTo, now)
     val iss = r.appendChild(issuer(doc, idpEntityId)).asInstanceOf[Element]
@@ -453,15 +380,13 @@ object Saml {
   }
 
   /** ログアウトの応答（成功・署名付き）. */
-  def buildLogoutResponse(
-    idpEntityId: String,
-    destination: String,
-    inResponseTo: String,
-    statusCode: String,
-    now: Instant,
-    key: PrivateKey,
-    cert: X509Certificate
-  ): String = {
+  def buildLogoutResponse(idpEntityId: String,
+                          destination: String,
+                          inResponseTo: String,
+                          statusCode: String,
+                          now: Instant,
+                          key: PrivateKey,
+                          cert: X509Certificate): String = {
     val doc = newDocument()
     val r = protocolRoot(doc, "LogoutResponse", destination, Some(inResponseTo), now)
     val iss = r.appendChild(issuer(doc, idpEntityId)).asInstanceOf[Element]
@@ -474,10 +399,7 @@ object Saml {
    * HTTP-Redirect で送る応答のクエリに署名を付ける（rsa-sha256 または ecdsa-sha256）.
    * query は "SAMLResponse=...&RelayState=..." の URL エンコード済みの文字列.
    */
-  def signRedirectQuery(
-    query: String,
-    key: PrivateKey
-  ): String = {
+  def signRedirectQuery(query: String, key: PrivateKey): String = {
     val (uri, alg) =
       if key.getAlgorithm == "EC" then ("http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256", "SHA256withECDSA")
       else ("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256", "SHA256withRSA")
@@ -491,9 +413,7 @@ object Saml {
 
   // ------------------------------------------------------------------ HTML
 
-  private def html(
-    s: String
-  ): String =
+  private def html(s: String): String =
     s.flatMap {
       case '&' => "&amp;"
       case '<' => "&lt;"
@@ -504,29 +424,14 @@ object Saml {
     }
 
   /** 自動で POST するページ. */
-  def postForm(
-    action: String,
-    field: String,
-    xml: String,
-    relayState: Option[String],
-    nonce: String
-  ): String = {
+  def postForm(action: String, field: String, xml: String, relayState: Option[String], nonce: String): String = {
     val value = Base64.getEncoder.encodeToString(xml.getBytes(StandardCharsets.UTF_8))
     autoPost(action, (field -> value) :: relayState.map("RelayState" -> _).toList, nonce)
   }
 
   /** 値をそのまま POST し直すページ（任意のフィールド）. */
-  def autoPost(
-    action: String,
-    fields: List[(String, String)],
-    nonce: String
-  ): String = {
-    val inputs = fields.map(
-      (
-        k,
-        v
-      ) => s"""<input type="hidden" name="${html(k)}" value="${html(v)}">"""
-    ).mkString
+  def autoPost(action: String, fields: List[(String, String)], nonce: String): String = {
+    val inputs = fields.map((k, v) => s"""<input type="hidden" name="${html(k)}" value="${html(v)}">""").mkString
     s"""<!DOCTYPE html>
        |<html><head><meta charset="utf-8"><title>sruru</title></head><body>
        |<form method="post" action="${html(action)}">$inputs
@@ -540,40 +445,25 @@ object Saml {
   // ------------------------------------------------------------------ メタデータ
 
   /** IdP のメタデータ. */
-  def idpMetadata(
-    entityId: String,
-    ssoUrl: String,
-    sloUrl: String,
-    cert: X509Certificate
-  ): String = {
+  def idpMetadata(entityId: String, ssoUrl: String, sloUrl: String, cert: X509Certificate): String = {
     val doc = newDocument()
-    def svc(
-      local: String,
-      binding: String,
-      url: String
-    ) =
+    def svc(local: String, binding: String, url: String) =
       el(doc, Metadata, s"md:$local", Seq("Binding" -> binding, "Location" -> url))()
     val idp = el(
       doc,
       Metadata,
       "md:IDPSSODescriptor",
       Seq("WantAuthnRequestsSigned" -> "false", "protocolSupportEnumeration" -> Protocol)
-    )(
-      (List(
-        el(doc, Metadata, "md:KeyDescriptor", Seq("use" -> "signing"))(
-          el(doc, DSig, "ds:KeyInfo")(
-            el(doc, DSig, "ds:X509Data")(
-              el(doc, DSig, "ds:X509Certificate", text = Some(Jose.certBase64(cert)))()
-            )
-          )
-        ),
-        svc("SingleLogoutService", BindingRedirect, sloUrl),
-        svc("SingleLogoutService", BindingPost, sloUrl)
-      ) ++ NameIdFormat.all.map(f => el(doc, Metadata, "md:NameIDFormat", text = Some(f))()) ++ List(
-        svc("SingleSignOnService", BindingRedirect, ssoUrl),
-        svc("SingleSignOnService", BindingPost, ssoUrl)
-      ))*
-    )
+    )((List(
+      el(doc, Metadata, "md:KeyDescriptor", Seq("use" -> "signing"))(el(
+        doc,
+        DSig,
+        "ds:KeyInfo"
+      )(el(doc, DSig, "ds:X509Data")(el(doc, DSig, "ds:X509Certificate", text = Some(Jose.certBase64(cert)))()))),
+      svc("SingleLogoutService", BindingRedirect, sloUrl),
+      svc("SingleLogoutService", BindingPost, sloUrl)
+    ) ++ NameIdFormat.all.map(f => el(doc, Metadata, "md:NameIDFormat", text = Some(f))()) ++
+      List(svc("SingleSignOnService", BindingRedirect, ssoUrl), svc("SingleSignOnService", BindingPost, ssoUrl)))*)
     val ed = el(doc, Metadata, "md:EntityDescriptor", Seq("entityID" -> entityId))(idp)
     declare(ed, "md", Metadata)
     declare(ed, "ds", DSig)
@@ -582,9 +472,7 @@ object Saml {
   }
 
   /** SP のメタデータを読む（アプリの設定の入力補助）. */
-  def parseSpMetadata(
-    xml: String
-  ): Either[String, SpMetadata] =
+  def parseSpMetadata(xml: String): Either[String, SpMetadata] =
     parse(xml).flatMap { doc =>
       val r = doc.getDocumentElement
       val ed =
@@ -615,9 +503,7 @@ object Saml {
       }
     }
 
-  private def signingCert(
-    sp: Element
-  ): Either[String, Option[String]] = {
+  private def signingCert(sp: Element): Either[String, Option[String]] = {
     val kd = children(sp, Metadata, "KeyDescriptor").filter(k => attr(k, "use").forall(_ == "signing"))
     kd.flatMap(descendants(_, DSig, "X509Certificate")).map(text).find(_.nonEmpty) match {
       case None => Right(None)

@@ -15,9 +15,7 @@ import java.util.Base64
 
 class FederationSpec extends CatsEffectSuite {
 
-  private def key(
-    kid: String
-  ): SigningKey = {
+  private def key(kid: String): SigningKey = {
     val kp = Jose.generate("RS256")
     SigningKey(kid, "RS256", kp.getPrivate, kp.getPublic, None)
   }
@@ -27,20 +25,12 @@ class FederationSpec extends CatsEffectSuite {
   private val iss = "https://idp.test"
   private val nonce = "n-123"
 
-  private def ok(
-    j: Json
-  ): IO[Response[IO]] = IO.pure(Response[IO](Status.Ok).withEntity(j))
+  private def ok(j: Json): IO[Response[IO]] = IO.pure(Response[IO](Status.Ok).withEntity(j))
   private val notFound: IO[Response[IO]] = IO.pure(Response[IO](Status.NotFound).withEntity("not found"))
-  private def path(
-    req: Request[IO]
-  ) = req.uri.path.renderString
-  private def auth(
-    req: Request[IO]
-  ) = req.headers.get(CIString("Authorization")).map(_.head.value)
+  private def path(req: Request[IO]) = req.uri.path.renderString
+  private def auth(req: Request[IO]) = req.headers.get(CIString("Authorization")).map(_.head.value)
 
-  private def claims(
-    extra: (String, Json)*
-  ): Json =
+  private def claims(extra: (String, Json)*): Json =
     Json.obj(
       "iss" -> iss.asJson,
       "aud" -> "client-1".asJson,
@@ -57,13 +47,11 @@ class FederationSpec extends CatsEffectSuite {
     UpstreamConfig(iss, "client-1", "secret-1", "https://sruru.test/cb", List("openid", "email", "profile"))
 
   /** 偽の IdP. jwks は呼ばれるたびに次の鍵の組を返す（最後のものを繰り返す）. */
-  private def idp(
-    idToken: String,
-    jwks: List[List[SigningKey]] = List(List(k1)),
-    discoveryIssuer: String = iss,
-    prefix: String = "",
-    userinfo: Option[Json] = None
-  ): IO[(Client[IO], Ref[IO, List[UrlForm]], Ref[IO, Int])] =
+  private def idp(idToken: String,
+                  jwks: List[List[SigningKey]] = List(List(k1)),
+                  discoveryIssuer: String = iss,
+                  prefix: String = "",
+                  userinfo: Option[Json] = None): IO[(Client[IO], Ref[IO, List[UrlForm]], Ref[IO, Int])] =
     for {
       forms <- Ref.of[IO, List[UrlForm]](Nil)
       calls <- Ref.of[IO, Int](0)
@@ -90,28 +78,16 @@ class FederationSpec extends CatsEffectSuite {
       (Client.fromHttpApp(app), forms, calls)
     }
 
-  private def run(
-    idToken: String,
-    c: UpstreamConfig = cfg,
-    userinfo: Option[Json] = None
-  ): IO[UpstreamIdentity] =
-    idp(idToken, userinfo = userinfo).flatMap(
-      (
-        client,
-        _,
-        _
-      ) => UpstreamOidc(client).exchange(c, "code-1", "verifier-1", nonce, now)
+  private def run(idToken: String, c: UpstreamConfig = cfg, userinfo: Option[Json] = None): IO[UpstreamIdentity] =
+    idp(idToken, userinfo = userinfo).flatMap((client, _, _) =>
+      UpstreamOidc(client).exchange(c, "code-1", "verifier-1", nonce, now)
     )
 
   // ------------------------------------------------------------------ OIDC
 
   test("OIDC: 認可 URL") {
     idp("x").flatMap {
-      (
-        client,
-        _,
-        _
-      ) =>
+      (client, _, _) =>
         UpstreamOidc(client).authorizationUri(
           cfg.copy(extraAuthParams = Presets.googleParams(Some("example.com"))),
           "st",
@@ -136,11 +112,7 @@ class FederationSpec extends CatsEffectSuite {
       claims("groups" -> List("a", "b").asJson, "amr" -> List("pwd", "mfa").asJson, "hd" -> "example.com".asJson)
     )
     idp(tok).flatMap {
-      (
-        client,
-        forms,
-        _
-      ) =>
+      (client, forms, _) =>
         UpstreamOidc(client).exchange(cfg, "code-1", "verifier-1", nonce, now).flatMap { id =>
           assertEquals(id.subject, "user-1")
           assertEquals(id.email, Some("taro@example.com"))
@@ -159,10 +131,7 @@ class FederationSpec extends CatsEffectSuite {
     }
   }
 
-  private def fails(
-    io: IO[?],
-    msg: String
-  ): IO[Unit] =
+  private def fails(io: IO[?], msg: String): IO[Unit] =
     io.attempt.map {
       case Left(e) => assert(e.getMessage.contains(msg), e.getMessage)
       case Right(v) => fail(s"成功してしまった: $v")
@@ -184,20 +153,12 @@ class FederationSpec extends CatsEffectSuite {
   test("OIDC: 知らない kid なら JWKS を一度だけ取り直す") {
     val k2 = key("k2")
     idp(Jose.sign(k2, claims()), jwks = List(List(k1), List(k1, k2))).flatMap {
-      (
-        client,
-        _,
-        calls
-      ) =>
+      (client, _, calls) =>
         UpstreamOidc(client).exchange(cfg, "c", "v", nonce, now).flatMap(id =>
           calls.get.map(n => assertEquals((id.subject, n), ("user-1", 2)))
         )
     } >> idp(Jose.sign(key("k3"), claims())).flatMap {
-      (
-        client,
-        _,
-        calls
-      ) =>
+      (client, _, calls) =>
         fails(UpstreamOidc(client).exchange(cfg, "c", "v", nonce, now), "署名") >> calls.get.map(assertEquals(_, 2))
     }
   }
@@ -261,11 +222,7 @@ class FederationSpec extends CatsEffectSuite {
     "token_uri" -> "https://oauth2.googleapis.com/token".asJson
   ).noSpaces
 
-  private def gUser(
-    id: String,
-    email: String,
-    extra: (String, Json)*
-  ): Json =
+  private def gUser(id: String, email: String, extra: (String, Json)*): Json =
     Json.obj(
       "id" -> id.asJson,
       "primaryEmail" -> email.asJson,
@@ -376,12 +333,7 @@ class FederationSpec extends CatsEffectSuite {
         List(("g1", "営業部", Some("sales@example.com"), List("1", "2")))
       )
       assertEquals(
-        pic.map(
-          (
-            b,
-            t
-          ) => (b.toList, t)
-        ),
+        pic.map((b, t) => (b.toList, t)),
         Some((List[Byte](1, 2, 3, -1), "image/png"))
       )
       assertEquals(none, None)
@@ -489,12 +441,7 @@ class FederationSpec extends CatsEffectSuite {
       assertEquals(snap.groups.map(g => (g.name, g.memberUserIds)), List(("開発部", List("u1", "u2"))))
       assertEquals(p1, None)
       assertEquals(
-        p2.map(
-          (
-            b,
-            t
-          ) => (b.toList, t)
-        ),
+        p2.map((b, t) => (b.toList, t)),
         Some((List[Byte](9, 8, 7), "image/png"))
       )
       assert(urls.exists(_.contains("$select=id,userPrincipalName")), urls.mkString("\n"))
@@ -503,9 +450,7 @@ class FederationSpec extends CatsEffectSuite {
   }
 
   test("上流の URL は https だけ（http://localhost の issuer のときだけ localhost も）") {
-    def u(
-      s: String
-    ) = Uri.unsafeFromString(s)
+    def u(s: String) = Uri.unsafeFromString(s)
     assert(UpstreamOidc.safeEndpoint("https://idp.test", u("https://idp.test/token")))
     assert(!UpstreamOidc.safeEndpoint("https://idp.test", u("http://169.254.169.254/latest")))
     assert(UpstreamOidc.safeEndpoint("http://localhost:9000", u("http://localhost:9000/token")))

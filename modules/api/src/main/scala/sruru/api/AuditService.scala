@@ -12,18 +12,14 @@ import java.util.UUID
  * 監査ログの書き込み. 認証・アカウントの出来事はすべてここを通るので、業務のメトリクス（AuditMetrics）と、
  * 本人へのプッシュ通知（アカウントの安全にかかわる出来事）もここで出す.
  */
-final class AuditService(
-  store: AuditStore,
-  push: Option[sbirds.push.PushService] = None) {
-  def log(
-    c: ReqCtx,
-    actor: Option[User],
-    via: String,
-    action: String,
-    target: Option[(String, String, String)] = None,
-    success: Boolean = true,
-    detail: Json = Json.obj()
-  ): IO[Unit] =
+final class AuditService(store: AuditStore, push: Option[sbirds.push.PushService] = None) {
+  def log(c: ReqCtx,
+          actor: Option[User],
+          via: String,
+          action: String,
+          target: Option[(String, String, String)] = None,
+          success: Boolean = true,
+          detail: Json = Json.obj()): IO[Unit] =
     store.append(AuditEntry(
       actor.map(_.id),
       actor.map(_.username),
@@ -41,10 +37,7 @@ final class AuditService(
       IO.whenA(success)(notifyUser(action, target))
 
   /** 本人へのプッシュ通知（PWA）. 秘密の値（コード・リンク）は載せず、出来事と確かめる画面だけを知らせる. */
-  private def notifyUser(
-    action: String,
-    target: Option[(String, String, String)]
-  ): IO[Unit] =
+  private def notifyUser(action: String, target: Option[(String, String, String)]): IO[Unit] =
     (
       push,
       target.collect { case ("user", id, _) => id }.flatMap(id => scala.util.Try(UUID.fromString(id)).toOption),
@@ -54,23 +47,15 @@ final class AuditService(
         ps.send(uid, sbirds.push.PushMessage(title, body, "/me/security", Some(action))).start.void
       }
 
-  def byPrincipal(
-    c: ReqCtx,
-    p: Principal,
-    action: String,
-    target: Option[(String, String, String)] = None,
-    success: Boolean = true,
-    detail: Json = Json.obj()
-  ): IO[Unit] =
+  def byPrincipal(c: ReqCtx,
+                  p: Principal,
+                  action: String,
+                  target: Option[(String, String, String)] = None,
+                  success: Boolean = true,
+                  detail: Json = Json.obj()): IO[Unit] =
     log(c, Some(p.user), p.via.label, action, target, success, detail)
 
-  def userTarget(
-    u: User
-  ): Option[(String, String, String)] = Some(("user", u.id.toString, u.username))
-  def groupTarget(
-    g: Group
-  ): Option[(String, String, String)] = Some(("group", g.id.toString, g.name))
-  def appTarget(
-    a: Application
-  ): Option[(String, String, String)] = Some(("application", a.id.toString, a.slug))
+  def userTarget(u: User): Option[(String, String, String)] = Some(("user", u.id.toString, u.username))
+  def groupTarget(g: Group): Option[(String, String, String)] = Some(("group", g.id.toString, g.name))
+  def appTarget(a: Application): Option[(String, String, String)] = Some(("application", a.id.toString, a.slug))
 }

@@ -80,9 +80,7 @@ class CoreSpec extends munit.FunSuite {
       parse("""{"userName":"Taro","active":true,"emails":[{"value":"taro@example.com","type":"work","primary":true}],
       "name":{"givenName":"Taro"},"meta":{"lastModified":"2026-01-01T00:00:00Z"},
       "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":{"department":"Sales"}}""").toOption.get
-    def m(
-      f: String
-    ) = ScimFilter.parse(f).map(ScimFilter.matches(_, u)).fold(e => fail(e), identity)
+    def m(f: String) = ScimFilter.parse(f).map(ScimFilter.matches(_, u)).fold(e => fail(e), identity)
     assert(m("userName eq \"taro\""))
     assert(m("emails[type eq \"work\" and value co \"example\"]"))
     assert(m("emails.value sw \"taro@\""))
@@ -101,10 +99,8 @@ class CoreSpec extends munit.FunSuite {
 
   test("Membership は親グループをたどる") {
     val now = java.time.Instant.now()
-    def g(
-      n: String,
-      parent: Option[java.util.UUID]
-    ) = Group(java.util.UUID.randomUUID(), n, "", parent.toList, Json.obj(), false, None, "local", None, now, now)
+    def g(n: String, parent: Option[java.util.UUID]) =
+      Group(java.util.UUID.randomUUID(), n, "", parent.toList, Json.obj(), false, None, "local", None, now, now)
     val root = g("全社", None)
     val dept = g("営業部", Some(root.id))
     val team = g("営業1課", Some(dept.id))

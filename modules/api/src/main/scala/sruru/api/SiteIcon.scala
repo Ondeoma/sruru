@@ -16,26 +16,19 @@ import scala.concurrent.duration.*
  * 管理者が登録した URL へサーバーから接続するので（SSRF）、https（開発用の http://localhost を除く）だけにし、
  * リダイレクト・時間・大きさを制限する. 画像は中身（先頭のバイト）で種類を判定し、SVG はスクリプトなどを含むものを拒否する.
  */
-final class SiteIcon(
-  http: Client[IO]) {
+final class SiteIcon(http: Client[IO]) {
   import SiteIcon.*
 
   /** 取れたら (画像, Content-Type). 取れなければ理由. */
-  def fetch(
-    site: String
-  ): IO[Either[String, (Array[Byte], String)]] =
+  def fetch(site: String): IO[Either[String, (Array[Byte], String)]] =
     Uri.fromString(site.trim).toOption.filter(allowed) match {
       case None => IO.pure(Left("https の URL ではありません（開発用の http://localhost を除く）"))
       case Some(u) =>
         val origin = u.copy(path = Uri.Path.Root, query = Query.empty, fragment = None)
         (for {
           page <- get(u, MaxHtml).map(_.toOption)
-          links = page.toList.flatMap(
-            (
-              base,
-              body
-            ) => SiteIcon.candidates(new String(body, StandardCharsets.UTF_8), base)
-          )
+          links =
+            page.toList.flatMap((base, body) => SiteIcon.candidates(new String(body, StandardCharsets.UTF_8), base))
           tries = (links ++ List(origin.withPath(Uri.Path.unsafeFromString("/favicon.ico")))).distinct.take(MaxTries)
           found <- tries.collectFirstSomeM(c => image(c))
         } yield found.toRight("サイトのアイコンが見つかりませんでした")).timeout(Overall).handleError(e =>
@@ -43,24 +36,15 @@ final class SiteIcon(
         )
     }
 
-  private def image(
-    u: Uri
-  ): IO[Option[(Array[Byte], String)]] =
-    get(u, MaxImage).map(_.toOption.flatMap(
-      (
-        _,
-        b
-      ) => SiteIcon.sniff(b).filter(ct => ct != Svg || Conv.safeSvg(new String(b, StandardCharsets.UTF_8))).map(b -> _)
+  private def image(u: Uri): IO[Option[(Array[Byte], String)]] =
+    get(u, MaxImage).map(_.toOption.flatMap((_, b) =>
+      SiteIcon.sniff(b).filter(ct => ct != Svg || Conv.safeSvg(new String(b, StandardCharsets.UTF_8))).map(b -> _)
     ))
 
   /** GET（リダイレクトは 3 回まで. その先も同じ条件）. 本文は max まで. (最後の URL, 本文). */
   private type Step = Either[(Uri, Array[Byte]), Uri] // Left: 本文, Right: リダイレクト先
 
-  private def get(
-    u: Uri,
-    max: Int,
-    hops: Int = 0
-  ): IO[Either[String, (Uri, Array[Byte])]] =
+  private def get(u: Uri, max: Int, hops: Int = 0): IO[Either[String, (Uri, Array[Byte])]] =
     if !allowed(u) then IO.pure(Left("許可されていない URL です"))
     else {
       val req = Request[IO](Method.GET, u).putHeaders(
@@ -96,18 +80,13 @@ object SiteIcon {
   private val LocalHosts = Set("localhost", "127.0.0.1", "[::1]", "::1")
 
   /** https か、開発用の http://localhost. 認証情報（user@host）を含む URL は使わない. */
-  def allowed(
-    u: Uri
-  ): Boolean =
+  def allowed(u: Uri): Boolean =
     u.authority.exists(a => a.userInfo.isEmpty) && u.host.isDefined &&
       (u.scheme.contains(Uri.Scheme.https) ||
         u.scheme.contains(Uri.Scheme.http) && u.host.exists(h => LocalHosts(h.value.toLowerCase)))
 
   private val LinkTag = """(?is)<link\b[^>]*>""".r
-  private def attr(
-    tag: String,
-    name: String
-  ): Option[String] =
+  private def attr(tag: String, name: String): Option[String] =
     s"""(?is)\\b$name\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))""".r.findFirstMatchIn(tag)
       .map(m => Option(m.group(1)).orElse(Option(m.group(2))).getOrElse(m.group(3)).trim)
 
@@ -115,10 +94,7 @@ object SiteIcon {
    * HTML の `<link>` からアイコンの候補（良いものから）. apple-touch-icon（大きい）→ SVG → サイズの大きい順 → そのほか.
    * 相対の URL はページの URL から解決する. data: などは使わない.
    */
-  def candidates(
-    html: String,
-    base: Uri
-  ): List[Uri] = {
+  def candidates(html: String, base: Uri): List[Uri] = {
     val head = html.take(MaxHtml)
     LinkTag.findAllIn(head).toList.flatMap { tag =>
       val rel = attr(tag, "rel").map(_.toLowerCase.split("\\s+").toSet).getOrElse(Set.empty)
@@ -140,12 +116,8 @@ object SiteIcon {
   }
 
   /** 画像の種類（先頭のバイトで判定. ヘッダーは信用しない）. */
-  def sniff(
-    b: Array[Byte]
-  ): Option[String] = {
-    def starts(
-      sig: Int*
-    ): Boolean = b.length >= sig.length && sig.indices.forall(i => (b(i) & 0xff) == sig(i))
+  def sniff(b: Array[Byte]): Option[String] = {
+    def starts(sig: Int*): Boolean = b.length >= sig.length && sig.indices.forall(i => (b(i) & 0xff) == sig(i))
     if starts(0x89, 0x50, 0x4e, 0x47) then Some("image/png")
     else if starts(0xff, 0xd8, 0xff) then Some("image/jpeg")
     else if starts(0x47, 0x49, 0x46, 0x38) then Some("image/gif")

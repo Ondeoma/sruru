@@ -10,15 +10,12 @@ import sruru.security.*
 import java.time.Instant
 
 /** 署名鍵（RS256・ES256）. DB に暗号化して保存し、各ノードは1分ごとに読み直す（鍵の入れ替えをほかのノードにも反映する）. */
-final class KeyService(
-  store: TokenStore,
-  box: SecretBox,
-  cache: Ref[IO, Option[(Long, List[(StoredKey, SigningKey)])]],
-  cn: String) {
+final class KeyService(store: TokenStore,
+                       box: SecretBox,
+                       cache: Ref[IO, Option[(Long, List[(StoredKey, SigningKey)])]],
+                       cn: String) {
 
-  private def generate(
-    alg: String
-  ): StoredKey = {
+  private def generate(alg: String): StoredKey = {
     val kp = Jose.generate(alg)
     val kid = Jose.newKid()
     val cert = Option.when(alg == "RS256")(Jose.selfSignedCert(kp, cn))
@@ -41,9 +38,7 @@ final class KeyService(
         .traverse_(a => store.addKeyC(generate(a)))
     }) *> cache.set(None)
 
-  private def decode(
-    k: StoredKey
-  ): Option[SigningKey] =
+  private def decode(k: StoredKey): Option[SigningKey] =
     for {
       enc <- box.decrypt(k.privateEnc)
       priv <- scala.util.Try(Jose.decodePrivate(k.alg, enc)).toOption
@@ -58,10 +53,7 @@ final class KeyService(
 
   def all: IO[List[(StoredKey, SigningKey)]] =
     (cache.get, IO.monotonic).flatMapN {
-      (
-        c,
-        now
-      ) =>
+      (c, now) =>
         c match {
           case Some((at, ks)) if now.toMillis - at < 60000 => IO.pure(ks)
           case _ =>
@@ -74,21 +66,11 @@ final class KeyService(
         }
     }
 
-  def active(
-    alg: String
-  ): IO[SigningKey] =
+  def active(alg: String): IO[SigningKey] =
     all.flatMap { ks =>
-      ks.find(
-        (
-          s,
-          _
-        ) => s.active && s.alg == alg
-      ).orElse(ks.find(
-        (
-          s,
-          _
-        ) => s.active && s.alg == "RS256"
-      )).map(_._2) match {
+      ks.find((s, _) => s.active && s.alg == alg).orElse(
+        ks.find((s, _) => s.active && s.alg == "RS256")
+      ).map(_._2) match {
         case Some(k) => IO.pure(k)
         case None => ensure *>
             all.flatMap(_.find(_._1.active).map(_._2).liftTo[IO](new IllegalStateException("署名鍵を用意できません")))
@@ -102,23 +84,15 @@ final class KeyService(
 
   def publicJwks: IO[List[Json]] = all.map(_.map(_._1.publicJwk))
 
-  def rotate(
-    alg: String
-  ): IO[StoredKey] = {
+  def rotate(alg: String): IO[StoredKey] = {
     val k = generate(alg)
     store.addKey(k) *> cache.set(None).as(k)
   }
 
-  def retire(
-    kid: String
-  ): IO[Boolean] = store.retireKey(kid).flatTap(_ => cache.set(None))
+  def retire(kid: String): IO[Boolean] = store.retireKey(kid).flatTap(_ => cache.set(None))
 }
 
 object KeyService {
-  def create(
-    store: TokenStore,
-    box: SecretBox,
-    cn: String
-  ): IO[KeyService] =
+  def create(store: TokenStore, box: SecretBox, cn: String): IO[KeyService] =
     Ref.of[IO, Option[(Long, List[(StoredKey, SigningKey)])]](None).map(new KeyService(store, box, _, cn))
 }
