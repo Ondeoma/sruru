@@ -69,6 +69,11 @@ final case class IpPolicy(
   adminAllow: List[String] = Nil,
   /** X-Forwarded-For を信頼するプロキシ（ロードバランサー）のアドレス */
   trustedProxies: List[String] = List("127.0.0.1/32", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"),
+  /**
+   * 利用者のアドレスを読むヘッダー（例: CloudFront-Viewer-Address）. 信頼するプロキシからの要求のときだけ使う.
+   * 空なら X-Forwarded-For だけを使う
+   */
+  clientIpHeader: String = "",
   /** グループの上書きの allow（それぞれにも含まれること）. ユーザーに効くポリシーを計算したときだけ入る（全体の設定には保存しない） */
   allowAlso: List[List[String]] = Nil) derives ConfiguredCodec
 

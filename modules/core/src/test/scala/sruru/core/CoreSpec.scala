@@ -73,6 +73,26 @@ class CoreSpec extends munit.FunSuite {
     assertEquals(IpRules.clientIp("198.51.100.1", Some("203.0.113.9"), List("10.0.0.0/8")), "198.51.100.1")
     // すべて信頼するプロキシなら、利用者が書けるいちばん左ではなく、もっとも近いプロキシ
     assertEquals(IpRules.clientIp("10.0.0.2", Some("10.9.9.9, 10.0.0.3"), List("10.0.0.0/8")), "10.0.0.3")
+    // 利用者のアドレスのヘッダー（CloudFront-Viewer-Address など）は信頼するプロキシ経由のときだけ使う
+    val trusted = List("10.0.0.0/8")
+    assertEquals(IpRules.clientIp("10.0.0.2", Some("130.176.1.1"), trusted, Some("203.0.113.9:5678")), "203.0.113.9")
+    assertEquals(IpRules.clientIp("198.51.100.1", None, trusted, Some("203.0.113.9:5678")), "198.51.100.1")
+    // ポート付きの IPv6（括弧あり・CloudFront の括弧なし）とポートなし
+    assertEquals(IpRules.clientIp("10.0.0.2", None, trusted, Some("[2001:db8::1]:443")), "2001:db8::1")
+    assertEquals(IpRules.clientIp("10.0.0.2", None, trusted, Some("2001:db8::1:443")), "2001:db8::1")
+    assertEquals(IpRules.clientIp("10.0.0.2", None, trusted, Some("2001:db8:0:0:0:0:0:1")), "2001:db8:0:0:0:0:0:1")
+    assertEquals(IpRules.clientIp("10.0.0.2", None, trusted, Some(" 203.0.113.9 ")), "203.0.113.9")
+    // 無い・解釈できないときは X-Forwarded-For に戻る
+    assertEquals(IpRules.clientIp("10.0.0.2", Some("203.0.113.7"), trusted, Some("example.com:443")), "203.0.113.7")
+    assertEquals(IpRules.clientIp("10.0.0.2", Some("203.0.113.7"), trusted, Some("")), "203.0.113.7")
+    assertEquals(IpRules.clientIp("10.0.0.2", Some("203.0.113.7"), trusted, Some("[2001:db8::1:443")), "203.0.113.7")
+    assertEquals(IpRules.clientIp("10.0.0.2", Some("203.0.113.7"), trusted, None), "203.0.113.7")
+    // ヘッダー名の検証
+    assert(IpRules.validHeaderName("CloudFront-Viewer-Address"))
+    assert(IpRules.validHeaderName(""))
+    assert(!IpRules.validHeaderName("X Client"))
+    assert(!IpRules.validHeaderName("X-Client:"))
+    assert(!IpRules.validHeaderName("X-利用者"))
   }
 
   test("ScimFilter") {

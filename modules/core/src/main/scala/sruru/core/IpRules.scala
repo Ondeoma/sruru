@@ -39,6 +39,34 @@ object IpRules {
       case None => ip
     }
 
+  /**
+   * ヘッダーの値からアドレスを取り出す（末尾のポートは取り除く）. `1.2.3.4:5678`・`[2001:db8::1]:443`・
+   * CloudFront の `2001:db8::1:443`（括弧なしの IPv6 + ポート）を受け付ける. 括弧なしの IPv6 は、最後の区切りを
+   * ポートとみなしても残りがアドレスとして解釈できるならポートとみなす. アドレスとして解釈できなければ None.
+   */
+  def addressWithoutPort(value: String): Option[String] = {
+    val v = value.trim
+    def isPort(p: String) = p.nonEmpty && p.forall(_.isDigit)
+    val candidates =
+      if v.startsWith("[") then
+        v.indexOf(']') match {
+          case -1 => Nil
+          case i =>
+            val rest = v.drop(i + 1)
+            if rest.isEmpty || (rest.startsWith(":") && isPort(rest.drop(1))) then List(v.slice(1, i)) else Nil
+        }
+      else
+        v.lastIndexOf(':') match {
+          case -1 => List(v)
+          case i => if isPort(v.drop(i + 1)) then List(v.take(i), v) else List(v)
+        }
+    candidates.find(c => c.nonEmpty && !c.contains('[') && parseAddress(c).isDefined)
+  }
+
+  /** HTTP のヘッダー名（RFC 9110 の token）として使えるか. 空（使わない）は可. */
+  def validHeaderName(name: String): Boolean =
+    name.trim.forall(c => (c.isLetterOrDigit && c < 0x80) || "!#$%&'*+-.^_`|~".contains(c))
+
   /** ::ffff:1.2.3.4 → 1.2.3.4 */
   private def normalize(a: Array[Byte]): Array[Byte] =
     if a.length == 16 && a.take(10).forall(_ == 0) && a(10) == -1 && a(11) == -1 then a.drop(12) else a
@@ -70,14 +98,18 @@ object IpRules {
   }
 
   /**
-   * 利用者の IP アドレス. 接続元が信頼するプロキシのときだけ X-Forwarded-For を右からたどり、
-   * 信頼するプロキシでない最初のアドレスを使う.
+   * 利用者の IP アドレス. 接続元が信頼するプロキシのときだけ、利用者のアドレスのヘッダー（`clientHeader`）を使う.
+   * それが無い・解釈できないときは X-Forwarded-For を右からたどり、信頼するプロキシでない最初のアドレスを使う.
    */
-  def clientIp(remote: String, forwardedFor: Option[String], trusted: List[String]): String =
+  def clientIp(remote: String,
+               forwardedFor: Option[String],
+               trusted: List[String],
+               clientHeader: Option[String] = None): String =
     if !matches(remote, trusted) then remote
-    else {
-      val chain = forwardedFor.toList.flatMap(_.split(',').map(_.trim).filter(_.nonEmpty))
-      // すべて信頼するプロキシなら、いちばん左（利用者が書ける値）ではなく、もっとも近いプロキシのアドレスを使う
-      chain.reverse.find(ip => !matches(ip, trusted)).orElse(chain.lastOption).getOrElse(remote)
-    }
+    else
+      clientHeader.flatMap(addressWithoutPort).getOrElse {
+        val chain = forwardedFor.toList.flatMap(_.split(',').map(_.trim).filter(_.nonEmpty))
+        // すべて信頼するプロキシなら、いちばん左（利用者が書ける値）ではなく、もっとも近いプロキシのアドレスを使う
+        chain.reverse.find(ip => !matches(ip, trusted)).orElse(chain.lastOption).getOrElse(remote)
+      }
 }

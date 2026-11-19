@@ -51,7 +51,8 @@ final class SessionAuth(sessions: SessionStore,
       val ip = IpRules.clientIp(
         remote,
         req.headers.get(CIString("X-Forwarded-For")).map(_.toList.map(_.value).mkString(",")),
-        p.ip.trustedProxies
+        p.ip.trustedProxies,
+        Option(p.ip.clientIpHeader.trim).filter(_.nonEmpty).flatMap(h => req.headers.get(CIString(h))).map(_.head.value)
       )
       ReqCtx(ip, req.headers.get(CIString("User-Agent")).map(_.head.value.take(400)))
     }

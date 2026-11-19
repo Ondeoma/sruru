@@ -629,6 +629,9 @@ final class AdminRoutes(dir: Directory,
           IpRules.parseAll(np.ip.adminAllow),
           IpRules.parseAll(np.ip.trustedProxies)
         ).collectFirst { case Left(e) => e }
+          .orElse(Option.when(!IpRules.validHeaderName(np.ip.clientIpHeader))(
+            s"利用者のアドレスのヘッダー名に使えない文字があります: ${np.ip.clientIpHeader}"
+          ))
           .orElse(Option.when(
             np.branding.logo.exists(l => scala.util.Try(UUID.fromString(l)).isFailure)
           )("ロゴの指定が正しくありません"))

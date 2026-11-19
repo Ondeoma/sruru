@@ -21,6 +21,7 @@ case class State(loaded: RV[Boolean] = RV(false), groups: RV[List[GroupDto]] = R
                  lifetime: RV[Int] = RV(336), idle: RV[Int] = RV(0), maxAccounts: RV[Int] = RV(5),
                  // IP
                  allow: RV[String] = RV(""), deny: RV[String] = RV(""), adminAllow: RV[String] = RV(""), proxies: RV[String] = RV(""),
+                 clientIpHeader: RV[String] = RV(""),
                  // 証明書
                  certEnabled: RV[Boolean] = RV(false), certHeader: RV[String] = RV("X-SSL-Client-Cert"), certMapping: RV[String] = RV("registered"),
                  certMfa: RV[Boolean] = RV(true),
@@ -50,7 +51,7 @@ def fill(s: State, p: PoliciesDto): Unit = {
   s.emailMinutes := m.emailCodeMinutes
   s.lifetime := p.session.lifetimeHours; s.idle := p.session.idleMinutes; s.maxAccounts := p.session.maxAccounts
   s.allow := p.ip.allow.mkString("\n"); s.deny := p.ip.deny.mkString("\n"); s.adminAllow := p.ip.adminAllow.mkString("\n")
-  s.proxies := p.ip.trustedProxies.mkString("\n")
+  s.proxies := p.ip.trustedProxies.mkString("\n"); s.clientIpHeader := p.ip.clientIpHeader
   s.certEnabled := p.cert.enabled; s.certHeader := p.cert.header; s.certMapping := p.cert.mapping; s.certMfa := p.cert.countsAsMfa
   s.title := p.branding.title; s.loginMessage := p.branding.loginMessage; s.selfReg := p.branding.selfRegistration; s.gravatar := p.branding.gravatar
   s.logo := p.branding.logo
@@ -63,7 +64,8 @@ def build(s: State): PoliciesDto = PoliciesDto(
   LockoutPolicy(s.lockEnabled.v, s.maxFailures.v, s.lockMinutes.v, s.ipMaxFailures.v, s.ipWindow.v),
   MfaPolicy(s.mfaMode.v, s.mfaGroups.v, s.mfaAdmins.v, s.allowTotp.v, s.allowEmail.v, s.emailMinutes.v),
   SessionPolicy(s.lifetime.v, s.idle.v, s.maxAccounts.v),
-  IpPolicy(Fmt.lines(s.allow.v), Fmt.lines(s.deny.v), Fmt.lines(s.adminAllow.v), Fmt.lines(s.proxies.v)),
+  IpPolicy(Fmt.lines(s.allow.v), Fmt.lines(s.deny.v), Fmt.lines(s.adminAllow.v), Fmt.lines(s.proxies.v),
+    clientIpHeader = s.clientIpHeader.v.trim),
   CertAuthPolicy(s.certEnabled.v, s.certHeader.v.trim, s.certMapping.v, s.certMfa.v),
   Branding(s.title.v.trim, s.loginMessage.v, s.selfReg.v, s.gravatar.v, s.logo.v),
   AuditPolicy(s.retention.v))
@@ -144,6 +146,8 @@ def groupNames(s: State) = s.groups.mapC(gs => GroupTree.flatten(gs).map(_._1.na
           <label class="field"><span>ログインを拒むアドレス</span><textarea class="code" v-model="s.deny" rows="4"></textarea></label>
           <label class="field"><span>管理の画面・管理 API を使えるアドレス（空ならどこからでも）</span><textarea class="code" v-model="s.adminAllow" rows="4"></textarea></label>
           <label class="field"><span>信頼するプロキシ（X-Forwarded-For を使う）</span><textarea class="code" v-model="s.proxies" rows="4"></textarea></label>
+          <label class="field"><span>利用者のアドレスのヘッダー（空なら X-Forwarded-For だけを使う）</span><input type="text" v-model="s.clientIpHeader" class="mono" placeholder="CloudFront-Viewer-Address">
+            <span class="hint">信頼するプロキシからの要求のときだけ使います。CloudFront なら CloudFront-Viewer-Address（オリジンリクエストポリシーで転送するヘッダーに加えてください）。末尾のポートは取り除きます。無い・読めないときは X-Forwarded-For を使います。</span></label>
         </div>
         <p class="notice warn small">管理の画面を使えるアドレスを制限するときは、今使っているアドレスを含めてください。含めないと、保存した後に管理の画面を開けなくなります。</p>
       </section>
