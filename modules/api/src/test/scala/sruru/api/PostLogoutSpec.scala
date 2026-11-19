@@ -5,9 +5,24 @@ import sruru.core.OidcClientConfig
 import java.util.UUID
 
 /** ログアウト後に戻してよい URI. */
-class PostLogoutSpec extends munit.FunSuite:
-  private val c = OidcClientConfig(UUID.randomUUID(), "stui", None, List("https://stui.example.com/auth/callback"),
-    List("https://other.example.com/bye"), Nil, Nil, "implicit", "id", "RS256", 300, 300, 3600, false, None)
+class PostLogoutSpec extends munit.FunSuite {
+  private val c = OidcClientConfig(
+    UUID.randomUUID(),
+    "stui",
+    None,
+    List("https://stui.example.com/auth/callback"),
+    List("https://other.example.com/bye"),
+    Nil,
+    Nil,
+    "implicit",
+    "id",
+    "RS256",
+    300,
+    300,
+    3600,
+    false,
+    None
+  )
 
   test("登録したものと、リダイレクト URI と同じオリジンの URL は戻してよい") {
     assert(OidcRoutes.allowedPostLogout(c, "https://other.example.com/bye"))
@@ -23,3 +38,4 @@ class PostLogoutSpec extends munit.FunSuite:
     assert(!OidcRoutes.allowedPostLogout(c, "https://other.example.com/"))
     assert(!OidcRoutes.allowedPostLogout(c, "not a url"))
   }
+}

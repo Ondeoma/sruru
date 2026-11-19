@@ -1,8 +1,11 @@
 package sruru.api
 
 /** REST API の一覧（GET /api/endpoints・MCP の list_api_endpoints）. 型は modules/shared の Dto.scala. */
-object ApiCatalog:
-  final case class Endpoint(method: String, path: String, description: String)
+object ApiCatalog {
+  final case class Endpoint(
+    method: String,
+    path: String,
+    description: String)
 
   val all: List[Endpoint] = List(
     // ---------------------------------------------------------------- 画面の設定・ログイン（ログインしていなくても使える）
@@ -57,12 +60,20 @@ object ApiCatalog:
     // ---------------------------------------------------------------- 管理
     Endpoint("GET", "/api/admin/dashboard", "概要 → DashboardDto"),
     Endpoint("GET", "/api/admin/idp-info", "この IdP の接続情報 → IdpInfoDto"),
-    Endpoint("GET", "/api/admin/users?q=&status=active|disabled|locked|service|admin&groupId=&source=&limit=&offset=", "ユーザーの一覧 → UserListDto"),
+    Endpoint(
+      "GET",
+      "/api/admin/users?q=&status=active|disabled|locked|service|admin&groupId=&source=&limit=&offset=",
+      "ユーザーの一覧 → UserListDto"
+    ),
     Endpoint("POST", "/api/admin/users", "ユーザーを作る UserReq → UserDto"),
     Endpoint("GET", "/api/admin/users/{id}", "ユーザーの詳細 → UserDetailDto"),
     Endpoint("PUT", "/api/admin/users/{id}", "ユーザーを変える UserReq（password は無視） → UserDto"),
     Endpoint("DELETE", "/api/admin/users/{id}", "ユーザーを削除"),
-    Endpoint("POST", "/api/admin/users/{id}/password", "パスワードを設定・リセット SetPasswordReq（password なしなら生成） → GeneratedPasswordDto"),
+    Endpoint(
+      "POST",
+      "/api/admin/users/{id}/password",
+      "パスワードを設定・リセット SetPasswordReq（password なしなら生成） → GeneratedPasswordDto"
+    ),
     Endpoint("POST", "/api/admin/users/{id}/unlock", "ロックを解除"),
     Endpoint("POST", "/api/admin/users/{id}/reset-mfa", "多要素認証の登録を消す"),
     Endpoint("POST", "/api/admin/users/{id}/logout", "すべての端末からログアウトさせ、トークンを失効"),
@@ -74,7 +85,11 @@ object ApiCatalog:
     Endpoint("DELETE", "/api/admin/users/{id}/certs/{certId}", "証明書を外す"),
     Endpoint("POST", "/api/admin/users/{id}/tokens", "サービスアカウントなどの API トークンを作る TokenReq → CreatedTokenDto"),
     Endpoint("GET", "/api/admin/groups", "グループの一覧 → [GroupDto]"),
-    Endpoint("POST", "/api/admin/groups", "グループを作る GroupReq（rule は {match: all|any, conditions: [{path, op, value, values}]}） → GroupDto"),
+    Endpoint(
+      "POST",
+      "/api/admin/groups",
+      "グループを作る GroupReq（rule は {match: all|any, conditions: [{path, op, value, values}]}） → GroupDto"
+    ),
     Endpoint("GET", "/api/admin/groups/{id}", "グループ → GroupDto"),
     Endpoint("PUT", "/api/admin/groups/{id}", "グループを変える GroupReq → GroupDto"),
     Endpoint("DELETE", "/api/admin/groups/{id}", "グループを削除"),
@@ -99,8 +114,16 @@ object ApiCatalog:
     Endpoint("GET", "/api/admin/policies", "ポリシー → PoliciesDto"),
     Endpoint("PUT", "/api/admin/policies", "ポリシーを変える PoliciesDto"),
     Endpoint("GET", "/api/admin/federation", "外部の IdP → [FederationDto]"),
-    Endpoint("POST", "/api/admin/federation", "外部の IdP を追加 FederationReq（kind: google|entra|oidc. syncConfig: google {serviceAccountJson, adminEmail, customer} / entra {tenantId, clientId, clientSecret}） → FederationDto"),
-    Endpoint("PUT", "/api/admin/federation/{id}", "外部の IdP を変える FederationReq（clientSecret・syncConfig は変えるときだけ） → FederationDto"),
+    Endpoint(
+      "POST",
+      "/api/admin/federation",
+      "外部の IdP を追加 FederationReq（kind: google|entra|oidc. syncConfig: google {serviceAccountJson, adminEmail, customer} / entra {tenantId, clientId, clientSecret}） → FederationDto"
+    ),
+    Endpoint(
+      "PUT",
+      "/api/admin/federation/{id}",
+      "外部の IdP を変える FederationReq（clientSecret・syncConfig は変えるときだけ） → FederationDto"
+    ),
     Endpoint("DELETE", "/api/admin/federation/{id}", "外部の IdP を削除"),
     Endpoint("POST", "/api/admin/federation/{id}/sync", "ディレクトリを今すぐ同期 → SyncResultDto"),
     Endpoint("GET", "/api/admin/cert-authorities", "クライアント証明書の認証局 → [CertAuthorityDto]"),
@@ -111,8 +134,13 @@ object ApiCatalog:
     Endpoint("GET", "/api/admin/keys", "署名鍵 → [KeyDto]"),
     Endpoint("POST", "/api/admin/keys/rotate?alg=RS256|ES256", "署名鍵を入れ替える → KeyDto"),
     Endpoint("DELETE", "/api/admin/keys/{kid}", "使っていない鍵を退役させる"),
-    Endpoint("GET", "/api/admin/audit?q=&action=&actorId=&targetId=&from=&to=&success=&via=&limit=&offset=", "監査ログ → AuditListDto"),
+    Endpoint(
+      "GET",
+      "/api/admin/audit?q=&action=&actorId=&targetId=&from=&to=&success=&via=&limit=&offset=",
+      "監査ログ → AuditListDto"
+    ),
     Endpoint("GET", "/api/admin/audit.csv?…", "監査ログの CSV（同じ条件）"),
     Endpoint("POST", "/api/admin/audit/verify", "監査ログの改ざんの検査 → AuditVerifyDto"),
     Endpoint("GET", "/api/endpoints", "この一覧")
   )
+}

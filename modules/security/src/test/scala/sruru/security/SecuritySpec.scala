@@ -3,7 +3,7 @@ package sruru.security
 import io.circe.Json
 import io.circe.syntax.*
 
-class SecuritySpec extends munit.FunSuite:
+class SecuritySpec extends munit.FunSuite {
 
   test("Argon2id") {
     val h = Passwords.hash("correct horse")
@@ -25,7 +25,7 @@ class SecuritySpec extends munit.FunSuite:
 
   test("JWS RS256・ES256 の署名と検証") {
     List("RS256", "ES256").foreach { alg =>
-      val kp  = Jose.generate(alg)
+      val kp = Jose.generate(alg)
       val key = SigningKey("k1", alg, kp.getPrivate, kp.getPublic, None)
       val jwt = Jose.sign(key, Json.obj("sub" -> "u".asJson))
       assertEquals(Jose.verify(jwt, List(key.jwk)).map(_.hcursor.get[String]("sub").toOption), Right(Some("u")))
@@ -38,7 +38,7 @@ class SecuritySpec extends munit.FunSuite:
   }
 
   test("自己署名証明書と PEM") {
-    val kp   = Jose.generate("RS256")
+    val kp = Jose.generate("RS256")
     val cert = Jose.selfSignedCert(kp, "sruru")
     val back = Jose.parseCerts(Jose.certPem(cert)).toOption.get.head
     assertEquals(back, cert)
@@ -52,18 +52,38 @@ class SecuritySpec extends munit.FunSuite:
     import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
     import java.util.Date
     val caKp = Jose.generate("RS256")
-    val ca   = {
-      val b = new JcaX509v3CertificateBuilder(new X500Name("CN=Test CA"), java.math.BigInteger.ONE, new Date(System.currentTimeMillis() - 100000),
-        new Date(System.currentTimeMillis() + 86400000L), new X500Name("CN=Test CA"), caKp.getPublic)
+    val ca = {
+      val b = new JcaX509v3CertificateBuilder(
+        new X500Name("CN=Test CA"),
+        java.math.BigInteger.ONE,
+        new Date(System.currentTimeMillis() - 100000),
+        new Date(System.currentTimeMillis() + 86400000L),
+        new X500Name("CN=Test CA"),
+        caKp.getPublic
+      )
       b.addExtension(Extension.basicConstraints, true, new org.bouncycastle.asn1.x509.BasicConstraints(true))
-      new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA256withRSA").build(caKp.getPrivate)))
+      new JcaX509CertificateConverter().getCertificate(
+        b.build(new JcaContentSignerBuilder("SHA256withRSA").build(caKp.getPrivate))
+      )
     }
     val kp = Jose.generate("RS256")
     val leaf = {
-      val b = new JcaX509v3CertificateBuilder(new X500Name("CN=Test CA"), java.math.BigInteger.TWO, new Date(System.currentTimeMillis() - 100000),
-        new Date(System.currentTimeMillis() + 86400000L), new X500Name("CN=taro"), kp.getPublic)
-      b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.rfc822Name, "taro@example.com")))
-      new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA256withRSA").build(caKp.getPrivate)))
+      val b = new JcaX509v3CertificateBuilder(
+        new X500Name("CN=Test CA"),
+        java.math.BigInteger.TWO,
+        new Date(System.currentTimeMillis() - 100000),
+        new Date(System.currentTimeMillis() + 86400000L),
+        new X500Name("CN=taro"),
+        kp.getPublic
+      )
+      b.addExtension(
+        Extension.subjectAlternativeName,
+        false,
+        new GeneralNames(new GeneralName(GeneralName.rfc822Name, "taro@example.com"))
+      )
+      new JcaX509CertificateConverter().getCertificate(
+        b.build(new JcaContentSignerBuilder("SHA256withRSA").build(caKp.getPrivate))
+      )
     }
     val now = java.time.Instant.now()
     assert(ClientCerts.validate(List(leaf), List(ca), now).isRight)
@@ -81,3 +101,4 @@ class SecuritySpec extends munit.FunSuite:
     assertEquals(b.decrypt(b.encrypt("秘密")), Some("秘密"))
     assertEquals(new SecretBox("other-secret-0000").decrypt(b.encrypt("秘密")), None)
   }
+}

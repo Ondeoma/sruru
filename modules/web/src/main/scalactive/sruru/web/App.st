@@ -30,6 +30,7 @@ val routes: PathPatternRoutes = List(
   ("/me", _ => ProfileView()),
   ("/me/security", _ => SecurityView()),
   ("/me/tokens", _ => TokensView()),
+  ("/me/policies", _ => PolicyGroupsView()),
   ("/admin", _ => AdminLayout()),
   ("/admin/*", _ => AdminLayout()),
 )

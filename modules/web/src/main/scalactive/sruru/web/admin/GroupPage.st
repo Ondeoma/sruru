@@ -94,6 +94,7 @@ def children(s: State, g: GroupDto) = s.groups.mapC(_.filter(_.parentIds.contain
       </section>
       <p class="small muted">子のグループも含めたメンバーの数: {{ m.effective }}</p>
     </template>
+    <PolicyEditors :groupId="props.id" />
     <template v-for="g in first(s)">
       <GroupEditor :group="Some(g)" :groups="s.groups.v" :onSaved="x => saved(s, props, x)" />
     </template>

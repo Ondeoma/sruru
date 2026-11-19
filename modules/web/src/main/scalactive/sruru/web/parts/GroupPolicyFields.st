@@ -1,9 +1,9 @@
 <script lang="scala">
-import sruru.shared.*
 import sruru.web.*
 
 // グループのポリシーの上書きの入力欄（グループの編集フォームの「ポリシーの上書き」タブ）.
-case class Props(e: PolicyEdit)
+// logoUpload: ロゴの画像を上げる先（LogoPicker の uploadUrl）.
+case class Props(e: PolicyEdit, logoUpload: String = "/api/admin/logos")
 </script>
 
 <template>
@@ -13,7 +13,7 @@ case class Props(e: PolicyEdit)
 
     <h3>表示</h3>
     <label class="field"><span>サービス名</span><input type="text" v-model="props.e.title" placeholder="（全体のまま）"></label>
-    <div class="field"><span>ロゴ</span><LogoPicker :bind="props.e.logo" emptyLabel="全体のロゴ" /></div>
+    <div class="field"><span>ロゴ</span><LogoPicker :bind="props.e.logo" emptyLabel="全体のロゴ" :uploadUrl="props.logoUpload" /></div>
 
     <h3>パスワード</h3>
     <div class="grid2">

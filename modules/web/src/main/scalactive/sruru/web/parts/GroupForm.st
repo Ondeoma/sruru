@@ -1,6 +1,5 @@
 <script lang="scala">
 import sruru.shared.*
-import sruru.web.*
 
 // グループを作るモーダル（基本の項目だけ. 作った後はグループの画面で、メンバーやポリシーの上書きを設定する）.
 case class Props(groups: List[GroupDto], onSaved: GroupDto => Unit, onClose: Unit => Unit)

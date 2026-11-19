@@ -11,12 +11,17 @@ import org.scalajs.dom
  */
 object Main {
 
-  def main(args: Array[String]): Unit = {
+  def main(
+    args: Array[String]
+  ): Unit = {
     ScalactiveConfig.titleTemplate = "%s | sruru"
     ScalactiveConfig.defaultTitle = Some("sruru")
     Theme.apply()
-    // skorimako のブラウザの観測（ログインした後の画面だけ）と、PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
-    Observe.start()
+    // 共通部品（PWA の購読など）の更新の要求にも CSRF 対策のヘッダーを付ける
+    Fetch.extraHeaders = Map("X-Sruru" -> "1")
+    // skorimako のブラウザの観測（IdP なので、ログイン・同意などの画面では読み込まず、ログインした人が決まってから読み込む）と、
+    // PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
+    Observe.start(enabled = !sruru.shared.Pages.isPublic(dom.window.location.pathname), deferUntilUser = true)
     Pwa.register()
     App()(dom.document.body, AddMethod.appendS(IdSelector("app"))).init()
   }

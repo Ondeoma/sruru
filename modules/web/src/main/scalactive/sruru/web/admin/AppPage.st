@@ -23,6 +23,7 @@ case class State(app: RV[Option[AppDto]] = RV(None), protocol: RV[String] = RV("
                  grants: RV[List[String]] = RV(List("authorization_code", "refresh_token")), scopes: RV[String] = RV("openid profile email groups offline_access"),
                  consent: RV[String] = RV("implicit"), subMode: RV[String] = RV("id"), alg: RV[String] = RV("RS256"), accessTtl: RV[Int] = RV(3600),
                  idTtl: RV[Int] = RV(3600), refreshTtl: RV[Int] = RV(2592000), includeGroups: RV[Boolean] = RV(true), backchannel: RV[String] = RV(""),
+                 includeAppNames: RV[Boolean] = RV(false),
                  // SAML
                  entityId: RV[String] = RV(""), acsUrl: RV[String] = RV(""), acsBinding: RV[String] = RV("post"), sloUrl: RV[String] = RV(""),
                  nameIdFormat: RV[String] = RV("urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"), nameIdExpr: RV[String] = RV("{{user.email}}"),
@@ -67,6 +68,7 @@ def fill(s: State, a: AppDto): Unit = {
     s.postLogout := o.postLogoutRedirectUris.mkString("\n"); s.grants := o.grantTypes; s.scopes := o.scopes.mkString(" ")
     s.consent := o.consent; s.subMode := o.subMode; s.alg := o.signingAlg; s.accessTtl := o.accessTokenTtl; s.idTtl := o.idTokenTtl
     s.refreshTtl := o.refreshTokenTtl; s.includeGroups := o.includeGroups; s.backchannel := o.backchannelLogoutUri.getOrElse("")
+    s.includeAppNames := o.includeAppNames
   }
   a.saml.foreach(fillSaml(s, _))
 }
@@ -86,7 +88,7 @@ def request(s: State): AppReq = {
     mappings = s.mappings.v.map(_.toDto).filter(m => m.name.nonEmpty && m.expression.nonEmpty),
     oidc = Option.when(!saml)(OidcDto(s.clientId.v.trim, s.confidential.v, Fmt.lines(s.redirects.v), Fmt.lines(s.postLogout.v), s.grants.v,
       s.scopes.v.split("[\\s,]+").toList.filter(_.nonEmpty), s.consent.v, s.subMode.v, s.alg.v, s.accessTtl.v, s.idTtl.v, s.refreshTtl.v,
-      s.includeGroups.v, Fmt.opt(s.backchannel.v))),
+      s.includeGroups.v, Fmt.opt(s.backchannel.v), s.includeAppNames.v)),
     saml = Option.when(saml)(SamlDto(s.entityId.v.trim, s.acsUrl.v.trim, s.acsBinding.v, Fmt.opt(s.sloUrl.v), s.nameIdFormat.v, s.nameIdExpr.v,
       s.signResponse.v, s.signAssertion.v, Fmt.opt(s.spCert.v), s.wantSigned.v, s.sessionTtl.v)))
 }
@@ -235,6 +237,7 @@ val nameIdFormats = List(
           <label class="field"><span>リフレッシュトークンの有効期間（秒）</span><input type="number" min="0" v-model="s.refreshTtl"></label>
         </div>
         <label class="check"><input type="checkbox" v-model="s.includeGroups"><span>ID トークンにグループ（groups）を入れる</span></label>
+        <label class="check"><input type="checkbox" v-model="s.includeAppNames"><span>sbirds のサービス: アプリケーションの表示名を ID トークンに入れる（sbirds_apps・sbirds_app）</span></label>
         <label class="field"><span>バックチャネルログアウトの URI（任意）</span><input type="url" v-model="s.backchannel" placeholder="https://app.example.com/backchannel-logout"></label>
         <template v-for="a in appList(s)">
           <p v-if="a.oidc.exists(_.confidential)"><button type="button" class="small" @click="rotateSecret(s, props)">シークレットを作り直す</button></p>
@@ -284,6 +287,8 @@ val nameIdFormats = List(
       <p v-if="s.error.v.nonEmpty" class="error">{{ s.error }}</p>
       <div class="row save"><button type="submit" class="primary" :disabled="s.busy">{{ if (isNew(props)) "追加する" else "保存" }}</button></div>
     </form>
+
+    <template v-for="a in appList(s)"><AppGroupNames :appId="a.id.toString" /></template>
 
     <section v-for="i in infoList(s)" class="panel">
       <h2>アプリに設定する値</h2>

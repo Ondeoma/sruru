@@ -4,14 +4,17 @@ import io.circe.Json
 import io.circe.parser.parse
 import sruru.shared.PasswordPolicy
 
-class CoreSpec extends munit.FunSuite:
+class CoreSpec extends munit.FunSuite {
 
   private val ctx = parse("""{"user":{"username":"taro","email":"Taro@Example.com","given_name":"太郎","family_name":"山田",
     "groups":["app-sales","app-dev","staff"],"attributes":{"department":"営業","level":3}}}""").toOption.get
 
   test("Expr: 単独の式は値そのもの") {
     assertEquals(Expr.eval("{{user.attributes.level}}", ctx), Json.fromInt(3))
-    assertEquals(Expr.eval("{{ user.groups | filter_prefix:\"app-\" | strip_prefix:\"app-\" }}", ctx), Json.arr(Json.fromString("sales"), Json.fromString("dev")))
+    assertEquals(
+      Expr.eval("{{ user.groups | filter_prefix:\"app-\" | strip_prefix:\"app-\" }}", ctx),
+      Json.arr(Json.fromString("sales"), Json.fromString("dev"))
+    )
     assertEquals(Expr.eval("{{user.missing | default:\"なし\"}}", ctx), Json.fromString("なし"))
     assertEquals(Expr.eval("{{user.email | lower | email_domain}}", ctx), Json.fromString("example.com"))
   }
@@ -29,10 +32,19 @@ class CoreSpec extends munit.FunSuite:
   }
 
   test("GroupRule") {
-    val r = GroupRule("all", List(GroupCondition("user.email", "ends_with", "@example.com"), GroupCondition("user.groups", "contains", "dev")))
+    val r = GroupRule(
+      "all",
+      List(GroupCondition("user.email", "ends_with", "@example.com"), GroupCondition("user.groups", "contains", "dev"))
+    )
     assert(GroupRule.matches(r, ctx))
-    assert(!GroupRule.matches(r.copy(conditions = r.conditions :+ GroupCondition("user.attributes.department", "eq", "企画")), ctx))
-    assert(GroupRule.matches(GroupRule("any", List(GroupCondition("user.attributes.department", "in", values = List("企画", "営業")))), ctx))
+    assert(!GroupRule.matches(
+      r.copy(conditions = r.conditions :+ GroupCondition("user.attributes.department", "eq", "企画")),
+      ctx
+    ))
+    assert(GroupRule.matches(
+      GroupRule("any", List(GroupCondition("user.attributes.department", "in", values = List("企画", "営業")))),
+      ctx
+    ))
     assert(GroupRule.validate(GroupRule("all", List(GroupCondition("user.x", "bad")))).isLeft)
   }
 
@@ -42,7 +54,8 @@ class CoreSpec extends munit.FunSuite:
     assert(PasswordCheck.violations("abcdefghijk", p).nonEmpty)
     assertEquals(PasswordCheck.violations("Correct-Horse9", p), Nil)
     assert(PasswordCheck.violations("taro-Pass-123", p, List("taro")).nonEmpty)
-    assert(PasswordCheck.violations("Password123", p.copy(minLength = 8)).exists(_.contains("よく使われる")) || PasswordCheck.common.contains("password123"))
+    assert(PasswordCheck.violations("Password123", p.copy(minLength = 8)).exists(_.contains("よく使われる")) ||
+      PasswordCheck.common.contains("password123"))
   }
 
   test("IpRules") {
@@ -63,10 +76,13 @@ class CoreSpec extends munit.FunSuite:
   }
 
   test("ScimFilter") {
-    val u = parse("""{"userName":"Taro","active":true,"emails":[{"value":"taro@example.com","type":"work","primary":true}],
+    val u =
+      parse("""{"userName":"Taro","active":true,"emails":[{"value":"taro@example.com","type":"work","primary":true}],
       "name":{"givenName":"Taro"},"meta":{"lastModified":"2026-01-01T00:00:00Z"},
       "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":{"department":"Sales"}}""").toOption.get
-    def m(f: String) = ScimFilter.parse(f).map(ScimFilter.matches(_, u)).fold(e => fail(e), identity)
+    def m(
+      f: String
+    ) = ScimFilter.parse(f).map(ScimFilter.matches(_, u)).fold(e => fail(e), identity)
     assert(m("userName eq \"taro\""))
     assert(m("emails[type eq \"work\" and value co \"example\"]"))
     assert(m("emails.value sw \"taro@\""))
@@ -85,11 +101,14 @@ class CoreSpec extends munit.FunSuite:
 
   test("Membership は親グループをたどる") {
     val now = java.time.Instant.now()
-    def g(n: String, parent: Option[java.util.UUID]) = Group(java.util.UUID.randomUUID(), n, "", parent.toList, Json.obj(), false, None, "local", None, now, now)
+    def g(
+      n: String,
+      parent: Option[java.util.UUID]
+    ) = Group(java.util.UUID.randomUUID(), n, "", parent.toList, Json.obj(), false, None, "local", None, now, now)
     val root = g("全社", None)
     val dept = g("営業部", Some(root.id))
     val team = g("営業1課", Some(dept.id))
-    val all  = List(root, dept, team).map(x => x.id -> x).toMap
+    val all = List(root, dept, team).map(x => x.id -> x).toMap
     assertEquals(Membership.expand(List(team.id), all).names, List("営業1課", "営業部", "全社").sorted)
   }
 
@@ -114,13 +133,22 @@ class CoreSpec extends munit.FunSuite:
       mfa = MfaPolicy(mode = "optional"),
       session = SessionPolicy(lifetimeHours = 336, idleMinutes = 0),
       ip = IpPolicy(deny = List("192.0.2.1")),
-      branding = Branding(title = "全社"))
-    val a = GroupPolicy(password = PasswordOverride(minLength = Some(14), maxAgeDays = Some(90)), session = SessionOverride(idleMinutes = Some(30)),
-      branding = BrandingOverride(title = Some("営業"), logo = Some("l-a")), ip = IpOverride(allow = List("10.0.0.0/8")))
+      branding = Branding(title = "全社")
+    )
+    val a = GroupPolicy(
+      password = PasswordOverride(minLength = Some(14), maxAgeDays = Some(90)),
+      session = SessionOverride(idleMinutes = Some(30)),
+      branding = BrandingOverride(title = Some("営業"), logo = Some("l-a")),
+      ip = IpOverride(allow = List("10.0.0.0/8"))
+    )
     // 弱い値（短い最小長・長い有効期間・任意の多要素）は効かない
-    val b = GroupPolicy(password = PasswordOverride(minLength = Some(8), maxAgeDays = Some(30)), mfa = MfaOverride(mode = Some("required")),
-      lockout = LockoutOverride(lockMinutes = Some(0)), session = SessionOverride(lifetimeHours = Some(9999), idleMinutes = Some(60)),
-      branding = BrandingOverride(title = Some("開発")))
+    val b = GroupPolicy(
+      password = PasswordOverride(minLength = Some(8), maxAgeDays = Some(30)),
+      mfa = MfaOverride(mode = Some("required")),
+      lockout = LockoutOverride(lockMinutes = Some(0)),
+      session = SessionOverride(lifetimeHours = Some(9999), idleMinutes = Some(60)),
+      branding = BrandingOverride(title = Some("開発"))
+    )
     val e = GroupPolicy.effective(global, List((1, "営業", a), (5, "開発", b)))
     assertEquals(e.password.minLength, 14)
     assertEquals(e.password.maxAgeDays, 30)
@@ -138,6 +166,10 @@ class CoreSpec extends munit.FunSuite:
     // グループがなければ全体のまま
     assertEquals(GroupPolicy.effective(global, Nil), global)
     // 両方の方法を禁じたら認証アプリは残す
-    val noBoth = GroupPolicy.effective(global, List((0, "x", GroupPolicy(mfa = MfaOverride(allowTotp = Some(false), allowEmail = Some(false))))))
+    val noBoth = GroupPolicy.effective(
+      global,
+      List((0, "x", GroupPolicy(mfa = MfaOverride(allowTotp = Some(false), allowEmail = Some(false)))))
+    )
     assert(noBoth.mfa.allowTotp && !noBoth.mfa.allowEmail)
   }
+}

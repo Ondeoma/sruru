@@ -13,11 +13,11 @@ import javax.xml.crypto.dsig.dom.DOMSignContext
 import javax.xml.crypto.dsig.spec.{C14NMethodParameterSpec, TransformParameterSpec}
 import scala.jdk.CollectionConverters.*
 
-class SamlSpec extends munit.FunSuite:
+class SamlSpec extends munit.FunSuite {
 
-  private val kp   = Jose.generate("RS256")
+  private val kp = Jose.generate("RS256")
   private val cert = Jose.selfSignedCert(kp, "sruru-test")
-  private val now  = Instant.parse("2026-11-16T10:00:00Z")
+  private val now = Instant.parse("2026-11-16T10:00:00Z")
 
   private val authnXml =
     """<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
@@ -27,23 +27,42 @@ class SamlSpec extends munit.FunSuite:
       | <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" AllowCreate="true"/>
       |</samlp:AuthnRequest>""".stripMargin
 
-  private def enc(s: String) = URLEncoder.encode(s, StandardCharsets.UTF_8)
+  private def enc(
+    s: String
+  ) = URLEncoder.encode(s, StandardCharsets.UTF_8)
 
-  private def find(doc: Document, ns: String, local: String): List[Element] =
+  private def find(
+    doc: Document,
+    ns: String,
+    local: String
+  ): List[Element] = {
     val nl = doc.getElementsByTagNameNS(ns, local)
     (0 until nl.getLength).map(i => nl.item(i).asInstanceOf[Element]).toList
+  }
 
   /** テスト用: JDK の API で要素に enveloped 署名（inclusive C14N）を付ける. */
-  private def signWithJdk(target: Element, key: PrivateKey): Unit =
-    val f  = XMLSignatureFactory.getInstance("DOM")
+  private def signWithJdk(
+    target: Element,
+    key: PrivateKey
+  ): Unit = {
+    val f = XMLSignatureFactory.getInstance("DOM")
     val id = target.getAttribute("ID")
     target.setIdAttributeNS(null, "ID", true)
-    val ref = f.newReference("#" + id, f.newDigestMethod(DigestMethod.SHA256, null),
-      List(f.newTransform(Transform.ENVELOPED, null.asInstanceOf[TransformParameterSpec])).asJava, null, null)
-    val si = f.newSignedInfo(f.newCanonicalizationMethod(CanonicalizationMethod.INCLUSIVE, null.asInstanceOf[C14NMethodParameterSpec]),
-      f.newSignatureMethod(SignatureMethod.RSA_SHA256, null), List(ref).asJava)
+    val ref = f.newReference(
+      "#" + id,
+      f.newDigestMethod(DigestMethod.SHA256, null),
+      List(f.newTransform(Transform.ENVELOPED, null.asInstanceOf[TransformParameterSpec])).asJava,
+      null,
+      null
+    )
+    val si = f.newSignedInfo(
+      f.newCanonicalizationMethod(CanonicalizationMethod.INCLUSIVE, null.asInstanceOf[C14NMethodParameterSpec]),
+      f.newSignatureMethod(SignatureMethod.RSA_SHA256, null),
+      List(ref).asJava
+    )
     val issuer = Xml.child(target, Xml.Assertion, "Issuer").get
     f.newXMLSignature(si, null).sign(new DOMSignContext(key, target, issuer.getNextSibling))
+  }
 
   test("HTTP-Redirect の往復と AuthnRequest の解析") {
     val back = Saml.decodeRedirect(Saml.encodeRedirect(authnXml))
@@ -65,26 +84,40 @@ class SamlSpec extends munit.FunSuite:
     assert(Saml.decodeRedirect("!!!notbase64").isLeft)
     assert(Saml.decodeRedirect(Base64.getEncoder.encodeToString("plain".getBytes)).isLeft)
     assert(Saml.parseAuthnRequest(authnXml.replace("urn:oasis:names:tc:SAML:2.0:protocol", "urn:x")).isLeft)
-    assert(Saml.parseAuthnRequest("""<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="a" Version="2.0"/>""").isLeft)
+    assert(Saml.parseAuthnRequest(
+      """<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="a" Version="2.0"/>"""
+    ).isLeft)
   }
 
-  private def params(signResponse: Boolean, signAssertion: Boolean) = AssertionParams(
-    idpEntityId = "https://idp.example", spEntityId = "https://sp.example/metadata", acsUrl = "https://sp.example/acs",
-    inResponseTo = Some("_req1"), nameId = "alice@example.com", nameIdFormat = Saml.NameIdFormat.Email,
-    sessionIndex = "_sess1", authnInstant = now, authnContextClassRef = Saml.PasswordProtectedTransport,
+  private def params(
+    signResponse: Boolean,
+    signAssertion: Boolean
+  ) = AssertionParams(
+    idpEntityId = "https://idp.example",
+    spEntityId = "https://sp.example/metadata",
+    acsUrl = "https://sp.example/acs",
+    inResponseTo = Some("_req1"),
+    nameId = "alice@example.com",
+    nameIdFormat = Saml.NameIdFormat.Email,
+    sessionIndex = "_sess1",
+    authnInstant = now,
+    authnContextClassRef = Saml.PasswordProtectedTransport,
     attributes = List(
       SamlAttribute("email", None, List("alice@example.com")),
       SamlAttribute("http://schemas.xmlsoap.org/claims/Group", Some("groups"), List("admins", "a&b <c>"))
     ),
-    now = now, validSeconds = 300, sessionNotOnOrAfter = Some(now.plusSeconds(3600)),
-    signResponse = signResponse, signAssertion = signAssertion
+    now = now,
+    validSeconds = 300,
+    sessionNotOnOrAfter = Some(now.plusSeconds(3600)),
+    signResponse = signResponse,
+    signAssertion = signAssertion
   )
 
   test("Response と Assertion の署名") {
     val xml = Saml.buildResponse(params(true, true), kp.getPrivate, cert)
     val doc = Xml.parse(xml).toOption.get
     val resp = doc.getDocumentElement
-    val a    = find(doc, Xml.Assertion, "Assertion").head
+    val a = find(doc, Xml.Assertion, "Assertion").head
     assertEquals(Saml.verifyElementSignature(a, cert), Right(()))
     assertEquals(Saml.verifyElementSignature(resp, cert), Right(()))
     assertEquals(Saml.verifyPostSignature(xml, cert), Right(()))
@@ -130,18 +163,18 @@ class SamlSpec extends munit.FunSuite:
   }
 
   test("ECDSA の鍵でも署名できる") {
-    val ec  = Jose.generate("ES256")
+    val ec = Jose.generate("ES256")
     val ecc = Jose.selfSignedCert(ec, "ec")
     val xml = Saml.buildResponse(params(true, false), ec.getPrivate, ecc)
     assertEquals(Saml.verifyPostSignature(xml, ecc), Right(()))
   }
 
   test("HTTP-Redirect の署名") {
-    val req    = enc(Saml.encodeRedirect(authnXml))
-    val relay  = enc("https://sp.example/page?x=1&y=2")
+    val req = enc(Saml.encodeRedirect(authnXml))
+    val relay = enc("https://sp.example/page?x=1&y=2")
     val sigAlg = enc("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256")
     val signed = s"SAMLRequest=$req&RelayState=$relay&SigAlg=$sigAlg"
-    val s      = Signature.getInstance("SHA256withRSA")
+    val s = Signature.getInstance("SHA256withRSA")
     s.initSign(kp.getPrivate)
     s.update(signed.getBytes(StandardCharsets.UTF_8))
     val sig = enc(Base64.getEncoder.encodeToString(s.sign()))
@@ -157,12 +190,23 @@ class SamlSpec extends munit.FunSuite:
     assert(Saml.redirectParams(forged).isLeft)
     assertEquals(Saml.redirectParams(q).map(_.get("RelayState")), Right(Some("https://sp.example/page?x=1&y=2")))
     // SHA-1 は受け付けない
-    assert(Saml.verifyRedirectSignature(q.replace(sigAlg, enc("http://www.w3.org/2000/09/xmldsig#rsa-sha1")), cert).isLeft)
+    assert(Saml.verifyRedirectSignature(
+      q.replace(sigAlg, enc("http://www.w3.org/2000/09/xmldsig#rsa-sha1")),
+      cert
+    ).isLeft)
     // 自前の署名関数（ECDSA も）
-    assertEquals(Saml.verifyRedirectSignature(Saml.signRedirectQuery(s"SAMLRequest=$req", kp.getPrivate), cert), Right(()))
+    assertEquals(
+      Saml.verifyRedirectSignature(Saml.signRedirectQuery(s"SAMLRequest=$req", kp.getPrivate), cert),
+      Right(())
+    )
     val ec = Jose.generate("ES256")
-    assertEquals(Saml.verifyRedirectSignature(Saml.signRedirectQuery(s"SAMLResponse=$req&RelayState=r", ec.getPrivate),
-      Jose.selfSignedCert(ec, "ec")), Right(()))
+    assertEquals(
+      Saml.verifyRedirectSignature(
+        Saml.signRedirectQuery(s"SAMLResponse=$req&RelayState=r", ec.getPrivate),
+        Jose.selfSignedCert(ec, "ec")
+      ),
+      Right(())
+    )
   }
 
   test("HTTP-POST の署名と署名ラッピング攻撃") {
@@ -173,10 +217,13 @@ class SamlSpec extends munit.FunSuite:
     assert(Saml.verifyPostSignature(signed.replace("https://sp.example/acs", "https://evil.example/acs"), cert).isLeft)
 
     // 署名済みの要求を子に入れ、署名をルートへ移す（参照先がルートではない）
-    val d1   = Xml.parse(signed).toOption.get
+    val d1 = Xml.parse(signed).toOption.get
     val orig = d1.getDocumentElement
-    val sig  = Xml.child(orig, Xml.DSig, "Signature").get
-    val evil = Xml.parse(authnXml.replace("_req1", "_evil").replace("https://sp.example/acs", "https://evil.example/acs")).toOption.get
+    val sig = Xml.child(orig, Xml.DSig, "Signature").get
+    val evil = Xml.parse(authnXml.replace(
+      "_req1",
+      "_evil"
+    ).replace("https://sp.example/acs", "https://evil.example/acs")).toOption.get
     val root = evil.getDocumentElement
     root.appendChild(evil.importNode(sig, true))
     val inner = evil.importNode(orig, true)
@@ -229,11 +276,13 @@ class SamlSpec extends munit.FunSuite:
   }
 
   test("IssueInstant のない要求は拒否する") {
-    val noTime = """<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-      | ID="_lo2" Version="2.0"><saml:Issuer>https://sp.example/metadata</saml:Issuer></samlp:LogoutRequest>""".stripMargin
+    val noTime =
+      """<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+        | ID="_lo2" Version="2.0"><saml:Issuer>https://sp.example/metadata</saml:Issuer></samlp:LogoutRequest>""".stripMargin
     assert(Saml.parseLogoutRequest(noTime).isLeft)
-    val noTimeAuthn = """<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-      | ID="_a2" Version="2.0"><saml:Issuer>https://sp.example/metadata</saml:Issuer></samlp:AuthnRequest>""".stripMargin
+    val noTimeAuthn =
+      """<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+        | ID="_a2" Version="2.0"><saml:Issuer>https://sp.example/metadata</saml:Issuer></samlp:AuthnRequest>""".stripMargin
     assert(Saml.parseAuthnRequest(noTimeAuthn).isLeft)
   }
 
@@ -246,10 +295,27 @@ class SamlSpec extends munit.FunSuite:
         | <samlp:SessionIndex>_s1</samlp:SessionIndex><samlp:SessionIndex>_s2</samlp:SessionIndex>
         |</samlp:LogoutRequest>""".stripMargin
     val r = Saml.decodeRedirect(Saml.encodeRedirect(lr)).flatMap(Saml.parseLogoutRequest).toOption.get
-    assertEquals(r, LogoutRequest("_lo1", "https://sp.example/metadata", Some("alice@example.com"), List("_s1", "_s2"), Some("https://idp.example/slo"),
-      Instant.parse("2026-11-16T10:00:00Z")))
+    assertEquals(
+      r,
+      LogoutRequest(
+        "_lo1",
+        "https://sp.example/metadata",
+        Some("alice@example.com"),
+        List("_s1", "_s2"),
+        Some("https://idp.example/slo"),
+        Instant.parse("2026-11-16T10:00:00Z")
+      )
+    )
 
-    val xml = Saml.buildLogoutResponse("https://idp.example", "https://sp.example/slo", "_lo1", Saml.StatusSuccess, now, kp.getPrivate, cert)
+    val xml = Saml.buildLogoutResponse(
+      "https://idp.example",
+      "https://sp.example/slo",
+      "_lo1",
+      Saml.StatusSuccess,
+      now,
+      kp.getPrivate,
+      cert
+    )
     assertEquals(Saml.verifyPostSignature(xml, cert), Right(()))
     val d = Xml.parse(xml).toOption.get.getDocumentElement
     assertEquals(d.getLocalName, "LogoutResponse")
@@ -257,8 +323,17 @@ class SamlSpec extends munit.FunSuite:
     assertEquals(d.getAttribute("IssueInstant"), "2026-11-16T10:00:00Z")
     assert(xml.contains(Saml.StatusSuccess))
 
-    val err = Saml.buildErrorResponse("https://idp.example", "https://sp.example/acs", Some("_req1"), Saml.StatusResponder,
-      Some("urn:oasis:names:tc:SAML:2.0:status:RequestDenied"), Some("許可されていません"), now, kp.getPrivate, cert)
+    val err = Saml.buildErrorResponse(
+      "https://idp.example",
+      "https://sp.example/acs",
+      Some("_req1"),
+      Saml.StatusResponder,
+      Some("urn:oasis:names:tc:SAML:2.0:status:RequestDenied"),
+      Some("許可されていません"),
+      now,
+      kp.getPrivate,
+      cert
+    )
     assertEquals(Saml.verifyPostSignature(err, cert), Right(()))
     assert(err.contains("RequestDenied") && !err.contains("Assertion"))
   }
@@ -271,3 +346,4 @@ class SamlSpec extends munit.FunSuite:
     assert(h.contains(Base64.getEncoder.encodeToString("<x/>".getBytes)))
     assert(h.contains("<noscript>"))
   }
+}
