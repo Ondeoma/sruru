@@ -46,31 +46,36 @@ final class LoginService(dir: Directory,
     "offline_access" -> "ログアウト後も使い続ける（リフレッシュトークン）"
   )
 
-  def appBrief(a: Application): AppBriefDto =
+  /** アプリケーションの概要を作る関数（アイコン・起動の URL は、この要求のホスト名のもの）. */
+  def appBrief: IO[Application => AppBriefDto] = cfg.url.map(base => appBrief(_, base))
+
+  private def appBrief(a: Application, base: String): AppBriefDto =
     AppBriefDto(
       a.id,
       a.slug,
       a.name,
-      a.iconUpdatedAt.map(t => s"${cfg.publicUrl}/app-icons/${a.id}?v=${t.getEpochSecond}"),
-      a.launchUrl.orElse(Option.when(a.protocol == "saml")(s"${cfg.publicUrl}/saml/idp/${a.slug}")),
+      a.iconUpdatedAt.map(t => s"$base/app-icons/${a.id}?v=${t.getEpochSecond}"),
+      a.launchUrl.orElse(Option.when(a.protocol == "saml")(s"$base/saml/idp/${a.slug}")),
       a.description,
       a.protocol
     )
 
   def requestDto(id: UUID): IO[Option[AuthRequestDto]] =
-    Time.now.flatMap(now => tokens.request(id, now)).flatMap(_.flatTraverse { r =>
-      apps.find(r.appId).map(_.map { a =>
-        val c = r.params.hcursor
-        val scopes = c.get[String]("scope").toOption.toList.flatMap(_.split(' ').filter(_.nonEmpty))
-        AuthRequestDto(
-          r.id,
-          appBrief(a),
-          scopes.map(s => ScopeDto(s, scopeLabels.getOrElse(s, s))),
-          c.get[String]("prompt").toOption.toList.flatMap(_.split(' ').toList),
-          c.get[String]("login_hint").toOption
-        )
-      })
-    })
+    (Time.now.flatMap(now => tokens.request(id, now)), appBrief).flatMapN((req, appBrief) =>
+      req.flatTraverse { r =>
+        apps.find(r.appId).map(_.map { a =>
+          val c = r.params.hcursor
+          val scopes = c.get[String]("scope").toOption.toList.flatMap(_.split(' ').filter(_.nonEmpty))
+          AuthRequestDto(
+            r.id,
+            appBrief(a),
+            scopes.map(s => ScopeDto(s, scopeLabels.getOrElse(s, s))),
+            c.get[String]("prompt").toOption.toList.flatMap(_.split(' ').toList),
+            c.get[String]("login_hint").toOption
+          )
+        })
+      }
+    )
 
   // ------------------------------------------------------------------ 画面に返す状態
 
@@ -103,7 +108,7 @@ final class LoginService(dir: Directory,
     } yield extra(FlowDto(
       f.id,
       f.stage,
-      u.map(x => FlowUserDto(x.username, x.name, dir.pictureUrl(x, p.branding.gravatar))),
+      u.map(x => FlowUserDto(x.username, x.name, dir.pictureUrl(x, p))),
       ms,
       u.flatMap(_.email).map(maskEmail),
       sent,
@@ -635,7 +640,7 @@ final class LoginService(dir: Directory,
                   mail.send(
                     resetAddress(u, byAdmin).get,
                     s"${up.branding.title} のパスワードの再設定",
-                    s"${u.name} さん\n\n次のリンクからパスワードを再設定してください（30分間有効）。\n${cfg.publicUrl}/reset-password?token=$t\n\n" +
+                    s"${u.name} さん\n\n次のリンクからパスワードを再設定してください（30分間有効）。\n${cfg.urlOf(up.domain)}/reset-password?token=$t\n\n" +
                       s"心当たりがない場合は、このメールを破棄してください。\n\nIP アドレス: ${c.ip}\n"
                   )
                 ) *>

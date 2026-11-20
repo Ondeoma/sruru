@@ -68,8 +68,16 @@ final class LoginRoutes(login: LoginService,
 
   private def getClientConfig(req: Request[IO]): IO[Response[IO]] = {
     // ログインしていれば、使用中のアカウントのグループの上書き（サービス名・ロゴ・案内）を反映する
-    (policies.get, auth.activeFor(req), fedStore.all, dir.passwordRules, dir.users.adminCount).flatMapN {
-      (global, active, fs, rules, admins) =>
+    // global は、このホスト名（ドメイン）のポリシー（ログインの前の画面にもドメインの上書きが効く）
+    (
+      policies.get,
+      auth.activeFor(req),
+      providers,
+      dir.passwordRules,
+      dir.users.adminCount,
+      auth.adminEnabled
+    ).flatMapN {
+      (global, active, fs, rules, admins, adminEnabled) =>
         active.fold(IO.pure(global))(a => dir.policyFor(a._3)).flatMap { p =>
           Ok(ClientConfigDto(
             p.branding.title,
@@ -77,16 +85,25 @@ final class LoginRoutes(login: LoginService,
             Branding.logoUrl(p.branding.logo),
             p.branding.loginMessage,
             global.branding.selfRegistration,
-            fs.filter(_.enabled).map(f => ProviderBriefDto(f.slug, f.name, f.kind)),
+            fs.map(f => ProviderBriefDto(f.slug, f.name, f.kind)),
             global.cert.enabled,
             rules,
             admins == 0,
-            cfg.mailEnabled
+            cfg.mailEnabled,
+            adminEnabled
           ))
             .map(_.putHeaders("Cache-Control" -> "no-store"))
         }
     }
   }
+
+  /** このホスト名（ドメイン）で使える外部の IdP（有効なもののうち、ドメインで絞っていればその中だけ）. */
+  private def providers: IO[List[FederationProvider]] =
+    (fedStore.all, Site.current).mapN((fs, d) =>
+      fs.filter(f => f.enabled && d.flatMap(_.policy.login.providers).forall(_.contains(f.slug)))
+    )
+
+  private def provider(slug: String): IO[Option[FederationProvider]] = providers.map(_.find(_.slug == slug))
 
   private def postSetup(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[SetupReq](req)(setup(req, _)))
@@ -404,8 +421,8 @@ final class LoginRoutes(login: LoginService,
       Time.now.flatMap(now => sessions.flow(flowId, bs.id, now)).flatMap {
         case None => redirectTo("/login")
         case Some(f) =>
-          fedStore.bySlug(slug).flatMap {
-            case Some(p) if p.enabled =>
+          provider(slug).flatMap {
+            case Some(p) =>
               fed.start(p, flowId).attempt.flatMap {
                 case Right((uri, data)) =>
                   sessions.saveFlow(f.copy(data = f.data.deepMerge(Json.obj("fed" -> data)))) *>
@@ -442,8 +459,8 @@ final class LoginRoutes(login: LoginService,
                     case Some(e) =>
                       afterExternal(fid, Left(AppError(ErrorCode.UpstreamLoginFailed, s"外部の IdP でログインできませんでした（$e）")))
                     case None =>
-                      fedStore.bySlug(slug).flatMap {
-                        case Some(p) if p.enabled =>
+                      provider(slug).flatMap {
+                        case Some(p) =>
                           // 同じ state を2回使えないように消す
                           sessions.saveFlow(f.copy(data = f.data.mapObject(_.remove("fed")))) *>
                             // 外部の IdP とのコードの交換（スパンには IdP の名前だけ. コード・トークンは載せない）
@@ -505,7 +522,7 @@ final class LoginRoutes(login: LoginService,
                 u.id,
                 u.username,
                 u.name,
-                dir.pictureUrl(u, p.branding.gravatar),
+                dir.pictureUrl(u, p),
                 bs.activeUser.contains(u.id),
                 l.authTime
               )

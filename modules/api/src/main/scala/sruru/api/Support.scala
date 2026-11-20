@@ -23,8 +23,15 @@ final case class ApiConfig(publicUrl: String,
                            nodeId: String = "node",
                            oauthClients: List[OAuthClient] = Nil) {
 
-  /** OIDC の issuer（末尾の / なし）. */
-  def issuer: String = publicUrl
+  private val scheme = publicUrl.takeWhile(_ != ':')
+
+  /** ドメイン（ホスト名. 既定なら空）の公開 URL（末尾の / なし）. スキームは PUBLIC_URL と同じ. */
+  def urlOf(domain: String): String = if domain.isEmpty then publicUrl else s"$scheme://$domain"
+
+  /** この要求のホスト名の公開 URL（OIDC の issuer・各種のリンクの元）. 要求の外では PUBLIC_URL. */
+  def url: IO[String] = Site.host.map(urlOf)
+
+  def here: IO[Here] = Site.host.map(d => Here(urlOf(d), d))
 }
 
 /** サーバーで組み立てる HTML の画面. */

@@ -26,6 +26,8 @@ sruru は、組織のための認証基盤（IdP）です。OpenID Connect・OAu
   （例: メールアドレスが `@example.com` で終わり、部署が「営業」）。アプリを使えるグループの制限
 - **グループごとのポリシー**: パスワード・ロック・多要素認証・セッション・IP 制限を、グループごとに上書きできる。
   全体と所属するグループのうち、より厳しい方が効く。サービス名・ロゴはグループの優先度で決まる
+- **マルチドメイン**: 同じ sruru を複数のホスト名で公開し、アクセスしたホスト名ごとにポリシーと表示を上書きできる
+  （issuer・エンティティ ID・ログインはホスト名ごと。ユーザー・グループ・アプリケーションは共通。`docs/design.md`）
 - **ブランド**: サービス名とロゴ（PNG・JPEG・WebP・GIF・SVG）を管理画面で変えられる
 - **アイコン**: ユーザーのアイコンの画像を登録でき、OIDC の `picture`・SCIM の `photos` で他のサービスに渡す。
   外部の IdP の画像・Gravatar も使える。アプリのアイコンはポータルに出る（登録したときにサイトのアイコン（favicon）を自動で取り込む）
@@ -98,7 +100,7 @@ java -cp 'dist/lib/*' sruru.app.Main
 | 変数 | 内容 |
 |---|---|
 | `DATABASE_URL` / `DATABASE_USER` / `DATABASE_PASSWORD` | PostgreSQL。冗長構成では3台を並べて `targetServerType=primary` |
-| `PUBLIC_URL` | 公開 URL。OIDC の issuer・SAML のエンティティ ID（`${PUBLIC_URL}/saml/metadata`）になる。`https://` なら Cookie に Secure が付く |
+| `PUBLIC_URL` | 公開 URL（既定のホスト名）。OIDC の issuer・SAML のエンティティ ID（`${PUBLIC_URL}/saml/metadata`）になる。`https://` なら Cookie に Secure が付く。ほかのホスト名は管理画面の「ドメイン」で足す（issuer・ポリシーはホスト名ごと。スキームは `PUBLIC_URL` と同じ） |
 | `APP_SECRET` | 署名鍵・外部 IdP のシークレット・TOTP の鍵の暗号化に使う16文字以上の値（全ノードで同じ。変えると保存済みの値を読めない） |
 | `STATIC_DIR` | ビルド済みの画面（`dist/static`） |
 | `HTTP_PORT` | 待ち受けるポート（既定 8080） |

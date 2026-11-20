@@ -77,6 +77,14 @@ final case class Group(
   /** ポリシーの上書き（なければ全体のまま） */
   policy: Option[sruru.shared.GroupPolicy] = None)
 
+/** ドメイン（sruru にアクセスするホスト名）と、そのポリシーの上書き. host は小文字の host か host:port. */
+final case class Domain(id: UUID,
+                        host: String,
+                        note: String,
+                        policy: sruru.shared.DomainPolicy,
+                        createdAt: Instant,
+                        updatedAt: Instant)
+
 /** ユーザーの所属（直接・動的・親グループを含めた最終的な所属）. */
 final case class Membership(groups: List[Group]) {
   def names: List[String] = groups.map(_.name).distinct.sorted

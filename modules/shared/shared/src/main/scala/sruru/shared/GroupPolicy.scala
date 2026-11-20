@@ -141,21 +141,34 @@ object GroupPolicy {
   }
 
   /** 上書きの値を確かめる. */
-  def validate(g: GroupPolicy): Either[String, GroupPolicy] = {
-    val nums = List(
-      g.password.minLength.filter(_ < 4).map(_ => "パスワードの最小の長さは4以上にしてください"),
-      g.password.minClasses.filter(x => x < 1 || x > 4).map(_ => "文字の種類の数は1〜4にしてください"),
-      g.password.historyCount.filter(_ < 0).map(_ => "再利用を禁じる回数は0以上にしてください"),
-      g.password.maxAgeDays.filter(_ < 1).map(_ => "パスワードの有効期限は1日以上にしてください"),
-      g.lockout.maxFailures.filter(_ < 1).map(_ => "ロックするまでの回数は1以上にしてください"),
-      g.lockout.lockMinutes.filter(_ < 0).map(_ => "ロックする時間は0以上にしてください"),
-      g.mfa.mode.filterNot(MfaRank.contains).map(_ => "多要素認証のモードは off・optional・required です"),
-      g.mfa.emailCodeMinutes.filter(_ < 1).map(_ => "メールのコードの有効期間は1分以上にしてください"),
-      g.session.lifetimeHours.filter(_ < 1).map(_ => "ログインの有効期間は1時間以上にしてください"),
-      g.session.idleMinutes.filter(_ < 1).map(_ => "無操作で切れるまでの時間は1分以上にしてください"),
-      g.session.maxAccounts.filter(_ < 1).map(_ => "同時にログインできるアカウントの数は1以上にしてください"),
-      g.branding.title.filter(_.trim.isEmpty).map(_ => "サービス名を入力してください")
-    ).flatten
-    nums.headOption.toLeft(g.copy(branding = g.branding.copy(title = g.branding.title.map(_.trim))))
+  def validate(g: GroupPolicy): Either[String, GroupPolicy] =
+    check(g.password, g.lockout, g.mfa, g.session, g.branding.title, zeroMeansNoLimit = false)
+      .toLeft(g.copy(branding = g.branding.copy(title = g.branding.title.map(_.trim))))
+
+  /**
+   * 上書きの値の確認（グループとドメインで共通）. 最初の誤りを返す.
+   * zeroMeansNoLimit: 有効期限・無操作の時間に 0（無期限・切れない）を許すか（置き換えるドメインの上書きでは許す）.
+   */
+  def check(pw: PasswordOverride,
+            lo: LockoutOverride,
+            mf: MfaOverride,
+            se: SessionOverride,
+            title: Option[String],
+            zeroMeansNoLimit: Boolean): Option[String] = {
+    val min = if zeroMeansNoLimit then 0 else 1
+    List(
+      pw.minLength.filter(_ < 4).map(_ => "パスワードの最小の長さは4以上にしてください"),
+      pw.minClasses.filter(x => x < 1 || x > 4).map(_ => "文字の種類の数は1〜4にしてください"),
+      pw.historyCount.filter(_ < 0).map(_ => "再利用を禁じる回数は0以上にしてください"),
+      pw.maxAgeDays.filter(_ < min).map(_ => s"パスワードの有効期限は${min}日以上にしてください"),
+      lo.maxFailures.filter(_ < 1).map(_ => "ロックするまでの回数は1以上にしてください"),
+      lo.lockMinutes.filter(_ < 0).map(_ => "ロックする時間は0以上にしてください"),
+      mf.mode.filterNot(MfaRank.contains).map(_ => "多要素認証のモードは off・optional・required です"),
+      mf.emailCodeMinutes.filter(_ < 1).map(_ => "メールのコードの有効期間は1分以上にしてください"),
+      se.lifetimeHours.filter(_ < 1).map(_ => "ログインの有効期間は1時間以上にしてください"),
+      se.idleMinutes.filter(_ < min).map(_ => s"無操作で切れるまでの時間は${min}分以上にしてください"),
+      se.maxAccounts.filter(_ < 1).map(_ => "同時にログインできるアカウントの数は1以上にしてください"),
+      title.filter(_.trim.isEmpty).map(_ => "サービス名を入力してください")
+    ).flatten.headOption
   }
 }

@@ -15,6 +15,7 @@ val routes: PathPatternRoutes = List(
   ("apps/:id", r => AppPage(id = r.pathname.groups("id"))),
   ("attributes", _ => AttributesPage()),
   ("policies", _ => PoliciesPage()),
+  ("domains", _ => DomainsPage()),
   ("federation", _ => FederationPage()),
   ("certs", _ => CertsPage()),
   ("tokens", _ => TokensPage()),
@@ -37,6 +38,7 @@ def mounted(): Unit = pageTitle("管理")
       <RouterLink to="/admin/apps">アプリケーション</RouterLink>
       <RouterLink to="/admin/attributes">カスタム属性</RouterLink>
       <RouterLink to="/admin/policies">ポリシー</RouterLink>
+      <RouterLink to="/admin/domains">ドメイン</RouterLink>
       <RouterLink to="/admin/federation">外部 IdP・同期</RouterLink>
       <RouterLink to="/admin/certs">証明書の認証局</RouterLink>
       <RouterLink to="/admin/tokens">API トークン</RouterLink>

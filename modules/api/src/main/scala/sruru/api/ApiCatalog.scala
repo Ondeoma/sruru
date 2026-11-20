@@ -109,6 +109,10 @@ object ApiCatalog {
     Endpoint("POST", "/api/admin/saml/parse-metadata", "SP のメタデータ（XML の本文）から SamlDto を作る → SamlDto"),
     Endpoint("POST", "/api/admin/expr/test", "式を試す {expression, userId} → {value} または {error}"),
     Endpoint("GET", "/api/admin/policies", "ポリシー → PoliciesDto"),
+    Endpoint("GET", "/api/admin/domains", "ドメイン（アクセスするホスト名ごとのポリシーの上書き）の一覧 → DomainsDto"),
+    Endpoint("POST", "/api/admin/domains", "ドメインを追加 DomainReq → DomainDto"),
+    Endpoint("PUT", "/api/admin/domains/{id}", "ドメインの説明・上書きを変える DomainReq（ホスト名は変えられない） → DomainDto"),
+    Endpoint("DELETE", "/api/admin/domains/{id}", "ドメインを削除（そのホスト名でのログインも終わる）"),
     Endpoint("PUT", "/api/admin/policies", "ポリシーを変える PoliciesDto"),
     Endpoint("GET", "/api/admin/federation", "外部の IdP → [FederationDto]"),
     Endpoint(

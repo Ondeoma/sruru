@@ -400,8 +400,8 @@ final class AdminRoutes(dir: Directory,
         dy <- dir.groups.dynamicMembers(id).flatMap(dir.users.findMany)
         eff <- dir.groups.effectiveMembers(id)
         res <- Ok(GroupMembersDto(
-          d.sortBy(_.username).map(dir.brief(_, p.branding.gravatar)),
-          dy.sortBy(_.username).map(dir.brief(_, p.branding.gravatar)),
+          d.sortBy(_.username).map(dir.brief(_, p)),
+          dy.sortBy(_.username).map(dir.brief(_, p)),
           eff.size
         ))
       } yield res
@@ -618,7 +618,7 @@ final class AdminRoutes(dir: Directory,
     )
 
   private def getAdminPolicies(req: Request[IO]): IO[Response[IO]] =
-    admin(req)(_ => policies.get.flatMap(Ok(_)))
+    admin(req)(_ => policies.global.flatMap(Ok(_)))
 
   private def putAdminPolicies(req: Request[IO]): IO[Response[IO]] =
     admin(req)(p =>
@@ -650,7 +650,7 @@ final class AdminRoutes(dir: Directory,
                 err(ErrorCode.AdminIpLockout, s"いまの IP アドレス（${c.ip}）が管理画面の許可に含まれていません")
               else
                 // allowAlso はユーザーに効くポリシーを計算したときだけのもの（全体には保存しない）
-                policies.get.flatMap(old =>
+                policies.global.flatMap(old =>
                   policies.put(np.copy(ip = np.ip.copy(allowAlso = Nil))) *>
                     audit.byPrincipal(
                       c,
@@ -780,7 +780,7 @@ final class AdminRoutes(dir: Directory,
     admin(req)(_ =>
       (factors.allTokens, policies.get).flatMapN((ts, p) =>
         dir.users.findMany(ts.map(_.userId).distinct).flatMap(us =>
-          Ok(ts.map(t => Conv.token(t, us.find(_.id == t.userId).map(dir.brief(_, p.branding.gravatar)))))
+          Ok(ts.map(t => Conv.token(t, us.find(_.id == t.userId).map(dir.brief(_, p)))))
         )
       )
     )
@@ -862,10 +862,9 @@ final class AdminRoutes(dir: Directory,
       )
     )
 
-  private val base = cfg.publicUrl
-
+  /** 各サービスに設定する URL（いま開いているホスト名のもの. issuer・エンティティ ID はホスト名ごと）. */
   def idpInfo: IO[IdpInfoDto] =
-    keys.saml.map { k =>
+    (keys.saml, cfg.url).mapN { (k, base) =>
       IdpInfoDto(
         base,
         s"$base/.well-known/openid-configuration",
@@ -889,7 +888,7 @@ final class AdminRoutes(dir: Directory,
   private def userDto(u: User): IO[UserDto] =
     (dir.membership(u), dir.hasTotp(u.id), policies.get, Time.now, dir.groups.staticGroupIds(u.id)).mapN(
       (m, mfa, p, now, direct) =>
-        dir.userDto(u, m, mfa, p.branding.gravatar, now, direct)
+        dir.userDto(u, m, mfa, p, now, direct)
     )
 
   private def listUsers(req: Request[IO]): IO[UserListDto] = {
@@ -908,7 +907,7 @@ final class AdminRoutes(dir: Directory,
       ms <- dir.groups.memberships(res._1.map(_.id))
       mfa <- factors.usersWithTotp(Some(res._1.map(_.id)))
     } yield UserListDto(
-      res._1.map(u => dir.userDto(u, ms.getOrElse(u.id, Membership(Nil)), mfa(u.id), p.branding.gravatar, now)),
+      res._1.map(u => dir.userDto(u, ms.getOrElse(u.id, Membership(Nil)), mfa(u.id), p, now)),
       res._2
     )
   }
@@ -1026,6 +1025,7 @@ final class AdminRoutes(dir: Directory,
       fs <- fedStore.all
       cons <- apps.consents(u.id)
       as <- apps.all
+      appBrief <- login.appBrief
     } yield UserDetailDto(
       d,
       ls.map(Conv.session(_, None)),
@@ -1040,7 +1040,7 @@ final class AdminRoutes(dir: Directory,
           i.lastLoginAt
         )
       ),
-      cons.flatMap((a, s, t) => as.find(_.id == a).map(x => ConsentDto(login.appBrief(x), s, t)))
+      cons.flatMap((a, s, t) => as.find(_.id == a).map(x => ConsentDto(appBrief(x), s, t)))
     )
 
   private def policyEditorsDto(id: UUID): IO[PolicyEditorsDto] =
@@ -1050,7 +1050,7 @@ final class AdminRoutes(dir: Directory,
       us <- dir.users.findMany(ed._1)
       gs <- dir.groups.findMany(ed._2)
     } yield PolicyEditorsDto(
-      us.sortBy(_.username).map(dir.brief(_, p.branding.gravatar)),
+      us.sortBy(_.username).map(dir.brief(_, p)),
       gs.sortBy(_.name.toLowerCase).map(g => GroupBrief(g.id, g.name))
     )
 
@@ -1121,8 +1121,8 @@ final class AdminRoutes(dir: Directory,
   // ------------------------------------------------------------------ アプリケーション
 
   private def appDto(a: Application): IO[AppDto] =
-    (apps.oidc(a.id), apps.saml(a.id), apps.mappings(a.id), apps.accessGroups(a.id)).mapN {
-      (o, s, ms, gs) =>
+    (apps.oidc(a.id), apps.saml(a.id), apps.mappings(a.id), apps.accessGroups(a.id), login.appBrief).mapN {
+      (o, s, ms, gs, appBrief) =>
         AppDto(
           a.id,
           a.slug,
@@ -1132,7 +1132,7 @@ final class AdminRoutes(dir: Directory,
           a.enabled,
           a.launchUrl,
           a.showInPortal,
-          login.appBrief(a).iconUrl,
+          appBrief(a).iconUrl,
           a.requireMfa,
           a.ipAllow,
           a.restrictAccess,

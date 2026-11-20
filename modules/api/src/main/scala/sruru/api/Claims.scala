@@ -18,17 +18,12 @@ object Claims {
   }
 }
 
-final class Claims(
-  dir: Directory,
-  apps: AppStore,
-  /** ロゴの URL を作るときの sruru の公開 URL */
-  publicUrl: String = "") {
+final class Claims(dir: Directory, apps: AppStore) {
   def sub(u: User, c: OidcClientConfig): String = Claims.sub(u, c)
 
   def build(u: User, m: Membership, app: Application, c: OidcClientConfig, scopes: Set[String]): IO[Json] =
-    (apps.mappings(app.id), appNames(m, app, c)).mapN {
-      (ms, sbirds) =>
-        val pic = dir.claimPicture(u)
+    (apps.mappings(app.id), appNames(m, app, c), dir.claimPicture(u)).mapN {
+      (ms, sbirds, pic) =>
         val base = List("sub" -> sub(u, c).asJson)
         val profile = if scopes("profile") then
           List(
@@ -66,8 +61,12 @@ final class Claims(
   private def appNames(m: Membership, app: Application, c: OidcClientConfig): IO[List[(String, Json)]] =
     if (!c.includeAppNames) IO.pure(Nil)
     else
-      (apps.all, apps.allAccessGroups, apps.displayNames(m.ids), apps.displayLogos(m.ids)).mapN {
-        (as, access, names, logos) =>
+      (apps.all, apps.allAccessGroups, apps.displayNames(m.ids), apps.displayLogos(m.ids), dir.baseUrl).mapN {
+        (as, access, names, logos, publicUrl) =>
+          // ロゴの URL は、要求のホスト名のもの
+          def logoUrl(a: Application, logos: Map[java.util.UUID, String]): Option[String] =
+            logos.get(a.id).map(id => s"$publicUrl/brand-logos/$id")
+              .orElse(a.iconUpdatedAt.map(t => s"$publicUrl/app-icons/${a.id}?v=${t.getEpochSecond}"))
           val usable =
             as.filter(a => a.enabled && (!a.restrictAccess || access.getOrElse(a.id, Nil).exists(m.ids.contains)))
           List(
@@ -78,8 +77,4 @@ final class Claims(
             "sbirds_app_logo" -> logoUrl(app, logos).asJson
           )
       }
-
-  private def logoUrl(a: Application, logos: Map[java.util.UUID, String]): Option[String] =
-    logos.get(a.id).map(id => s"$publicUrl/brand-logos/$id")
-      .orElse(a.iconUpdatedAt.map(t => s"$publicUrl/app-icons/${a.id}?v=${t.getEpochSecond}"))
 }

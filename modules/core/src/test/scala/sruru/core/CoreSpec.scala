@@ -141,6 +141,61 @@ class CoreSpec extends munit.FunSuite {
     assertEquals(IpRules.throttleKey("192.0.2.1"), "192.0.2.1")
   }
 
+  test("ドメインのポリシー: 指定した項目は全体を置き換え（緩めることもできる）、その上にグループの厳しい方が重なる") {
+    import sruru.shared.*
+    val global = PoliciesDto(
+      password = PasswordPolicy(minLength = 12, maxAgeDays = 90),
+      mfa = MfaPolicy(mode = "required"),
+      session = SessionPolicy(lifetimeHours = 24, idleMinutes = 30),
+      ip = IpPolicy(allow = List("10.0.0.0/8"), deny = List("10.9.9.9"), adminAllow = List("10.1.0.0/16")),
+      branding = Branding(title = "全社", loginMessage = "社内向け", selfRegistration = false),
+      cert = CertAuthPolicy(enabled = true)
+    )
+    val d = DomainPolicy(
+      password = PasswordOverride(minLength = Some(8), maxAgeDays = Some(0)),
+      mfa = MfaOverride(mode = Some("optional")),
+      session = SessionOverride(idleMinutes = Some(0)),
+      ip = Some(IpOverride(allow = Nil, deny = List("192.0.2.1"))),
+      branding = DomainBranding(title = Some("取引先"), loginMessage = Some(""), selfRegistration = Some(true)),
+      login = DomainLogin(cert = Some(false))
+    )
+    val p = DomainPolicy.applied(global, d)
+    // 緩い値でも、そのまま置き換える
+    assertEquals(p.password.minLength, 8)
+    assertEquals(p.password.maxAgeDays, 0)
+    assertEquals(p.mfa.mode, "optional")
+    assertEquals(p.session.idleMinutes, 0)
+    assertEquals(p.ip.allow, Nil)
+    assertEquals(p.ip.deny, List("192.0.2.1"))
+    assertEquals(p.branding.title, "取引先")
+    assertEquals(p.branding.loginMessage, "")
+    assert(p.branding.selfRegistration)
+    assert(!p.cert.enabled)
+    // 指定していない項目・ドメインでは変えられない項目は全体のまま
+    assertEquals(p.session.lifetimeHours, 24)
+    assertEquals(p.ip.adminAllow, List("10.1.0.0/16"))
+    assertEquals(DomainPolicy.applied(global, DomainPolicy()), global)
+    // グループの上書きは、ドメインを重ねた結果に対して厳しい方へ
+    val g = GroupPolicy(password = PasswordOverride(minLength = Some(10)), mfa = MfaOverride(mode = Some("off")))
+    val e = GroupPolicy.effective(p, List((0, "g", g)))
+    assertEquals(e.password.minLength, 10)
+    assertEquals(e.mfa.mode, "optional")
+    // どちらの方法も禁じたら、認証アプリは残す
+    val none =
+      DomainPolicy.applied(global, DomainPolicy(mfa = MfaOverride(allowTotp = Some(false), allowEmail = Some(false))))
+    assert(none.mfa.allowTotp && !none.mfa.allowEmail)
+    // 確認: 置き換えなので 0（無期限・切れない）を指定できる. グループの上書きではできない
+    assert(DomainPolicyCheck.validate(d).isRight)
+    assert(GroupPolicyCheck.validate(GroupPolicy(session = SessionOverride(idleMinutes = Some(0)))).isLeft)
+    assert(DomainPolicyCheck.validate(DomainPolicy(ip = Some(IpOverride(allow = List("not-an-ip"))))).isLeft)
+    assert(DomainPolicyCheck.validate(DomainPolicy(password = PasswordOverride(minLength = Some(2)))).isLeft)
+    // ホスト名の形
+    assertEquals(DomainPolicy.normalizeHost(" Auth.Example.COM:8443 "), Right("auth.example.com:8443"))
+    assert(DomainPolicy.normalizeHost("https://auth.example.com").isLeft)
+    assert(DomainPolicy.normalizeHost("auth.example.com/path").isLeft)
+    assert(DomainPolicy.normalizeHost("").isLeft)
+  }
+
   test("グループのポリシー: セキュリティは厳しい方、表示は優先度の高いグループ") {
     import sruru.shared.*
     val global = PoliciesDto(

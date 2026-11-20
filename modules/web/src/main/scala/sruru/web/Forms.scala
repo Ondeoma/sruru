@@ -336,3 +336,143 @@ object PolicyEdit {
   }
 
 }
+
+// ------------------------------------------------------------------ ドメインのポリシーの上書き
+
+/**
+ * ドメイン（アクセスするホスト名）のポリシーの上書きの入力. 数の欄は文字列（空欄は上書きしない）.
+ * する・しないの欄は "" （全体のまま）・"true"・"false"（グループと違い、全体の値を置き換えるので「しない」も選べる）.
+ */
+final case class DomainEdit(host: RV[String],
+                            note: RV[String],
+                            title: RV[String],
+                            logo: RV[Option[String]],
+                            messageOn: RV[Boolean],
+                            message: RV[String],
+                            selfReg: RV[String],
+                            cert: RV[String],
+                            providersOn: RV[Boolean],
+                            providers: RV[List[String]],
+                            admin: RV[Boolean],
+                            minLength: RV[String],
+                            minClasses: RV[String],
+                            history: RV[String],
+                            maxAge: RV[String],
+                            upper: RV[String],
+                            lower: RV[String],
+                            digit: RV[String],
+                            symbol: RV[String],
+                            userInfo: RV[String],
+                            common: RV[String],
+                            lockEnabled: RV[String],
+                            maxFailures: RV[String],
+                            lockMinutes: RV[String],
+                            mfaMode: RV[String],
+                            totp: RV[String],
+                            email: RV[String],
+                            emailMinutes: RV[String],
+                            lifetime: RV[String],
+                            idle: RV[String],
+                            maxAccounts: RV[String],
+                            ipOn: RV[Boolean],
+                            allow: RV[String],
+                            deny: RV[String]) {
+
+  private def num(label: String, v: String): Either[String, Option[Int]] =
+    if (v.trim.isEmpty) Right(None) else v.trim.toIntOption.map(Some(_)).toRight(s"「$label」は数で入力してください")
+
+  private def tri(v: String): Option[Boolean] =
+    v match { case "true" => Some(true); case "false" => Some(false); case _ => None }
+
+  def build: Either[String, DomainReq] =
+    for {
+      minL <- num("最小の長さ", minLength.v)
+      cls <- num("文字の種類の数", minClasses.v)
+      his <- num("再利用を禁じる数", history.v)
+      age <- num("有効期限", maxAge.v)
+      fail <- num("ロックするまでの回数", maxFailures.v)
+      lockM <- num("ロックする時間", lockMinutes.v)
+      mail <- num("メールのコードの有効期間", emailMinutes.v)
+      life <- num("ログインの有効期間", lifetime.v)
+      idl <- num("無操作で切れるまで", idle.v)
+      acc <- num("同時に使えるアカウントの数", maxAccounts.v)
+    } yield DomainReq(
+      host.v.trim,
+      note.v.trim,
+      DomainPolicy(
+        PasswordOverride(
+          minL,
+          tri(upper.v),
+          tri(lower.v),
+          tri(digit.v),
+          tri(symbol.v),
+          cls,
+          his,
+          age,
+          tri(userInfo.v),
+          tri(common.v)
+        ),
+        LockoutOverride(tri(lockEnabled.v), fail, lockM),
+        MfaOverride(Fmt.opt(mfaMode.v), tri(totp.v), tri(email.v), mail),
+        SessionOverride(life, idl, acc),
+        Option.when(ipOn.v)(IpOverride(Fmt.lines(allow.v), Fmt.lines(deny.v))),
+        DomainBranding(Fmt.opt(title.v), logo.v, Option.when(messageOn.v)(message.v.trim), tri(selfReg.v)),
+        DomainLogin(tri(cert.v), Option.when(providersOn.v)(providers.v)),
+        admin.v
+      )
+    )
+}
+
+object DomainEdit {
+  def from(host: String, note: String, p: DomainPolicy): DomainEdit = {
+    def n(o: Option[Int]) = RV(o.map(_.toString).getOrElse(""))
+    def b(o: Option[Boolean]) = RV(o.fold("")(_.toString))
+    DomainEdit(
+      RV(host),
+      RV(note),
+      RV(p.branding.title.getOrElse("")),
+      RV(p.branding.logo),
+      RV(p.branding.loginMessage.isDefined),
+      RV(p.branding.loginMessage.getOrElse("")),
+      b(p.branding.selfRegistration),
+      b(p.login.cert),
+      RV(p.login.providers.isDefined),
+      RV(p.login.providers.getOrElse(Nil)),
+      RV(p.admin),
+      n(p.password.minLength),
+      n(p.password.minClasses),
+      n(p.password.historyCount),
+      n(p.password.maxAgeDays),
+      b(p.password.requireUpper),
+      b(p.password.requireLower),
+      b(p.password.requireDigit),
+      b(p.password.requireSymbol),
+      b(p.password.disallowUserInfo),
+      b(p.password.disallowCommon),
+      b(p.lockout.enabled),
+      n(p.lockout.maxFailures),
+      n(p.lockout.lockMinutes),
+      RV(p.mfa.mode.getOrElse("")),
+      b(p.mfa.allowTotp),
+      b(p.mfa.allowEmail),
+      n(p.mfa.emailCodeMinutes),
+      n(p.session.lifetimeHours),
+      n(p.session.idleMinutes),
+      n(p.session.maxAccounts),
+      RV(p.ip.isDefined),
+      RV(p.ip.fold("")(_.allow.mkString("\n"))),
+      RV(p.ip.fold("")(_.deny.mkString("\n")))
+    )
+  }
+
+  /** 上書きしている項目のまとまり（一覧に出す）. */
+  def summary(p: DomainPolicy): List[String] = List(
+    "表示" -> (p.branding != DomainBranding()),
+    "ログインの方法" -> (p.login != DomainLogin()),
+    "パスワード" -> (p.password != PasswordOverride()),
+    "ロック" -> (p.lockout != LockoutOverride()),
+    "2段階認証" -> (p.mfa != MfaOverride()),
+    "セッション" -> (p.session != SessionOverride()),
+    "IP アドレス" -> p.ip.isDefined
+  ).collect { case (label, true) => label }
+}

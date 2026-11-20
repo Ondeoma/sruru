@@ -45,7 +45,9 @@ final case class ClientConfigDto(
   certEnabled: Boolean = false,
   passwordRules: List[String] = Nil,
   setupRequired: Boolean = false,
-  mailEnabled: Boolean = false) derives ConfiguredCodec
+  mailEnabled: Boolean = false,
+  /** このホスト名（ドメイン）で管理画面を使えるか */
+  adminEnabled: Boolean = true) derives ConfiguredCodec
 
 final case class AppBriefDto(id: UUID,
                              slug: String,
@@ -328,6 +330,23 @@ final case class GroupReq(name: String,
                           rule: Option[Json] = None,
                           priority: Int = 0,
                           policy: GroupPolicy = GroupPolicy()) derives ConfiguredCodec
+
+/** ドメイン（sruru にアクセスするホスト名）と、そのポリシーの上書き. */
+final case class DomainDto(
+  id: UUID,
+  /** ホスト名（host か host:port） */
+  host: String,
+  note: String = "",
+  policy: DomainPolicy = DomainPolicy(),
+  /** このドメインの公開 URL（issuer） */
+  url: String = "") derives ConfiguredCodec
+
+final case class DomainReq(host: String, note: String = "", policy: DomainPolicy = DomainPolicy())
+  derives ConfiguredCodec
+
+/** ドメインの一覧. primaryUrl は既定のホスト名（PUBLIC_URL）、current はいま開いているドメインの ID（既定なら None）. */
+final case class DomainsDto(primaryUrl: String, current: Option[UUID], domains: List[DomainDto])
+  derives ConfiguredCodec
 
 final case class GroupMembersDto(direct: List[UserBrief],
                                  dynamic: List[UserBrief],

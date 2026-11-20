@@ -61,6 +61,16 @@ ADMIN_GROUPS=myapp-admins                   # sruru のグループ名
 3. SP には sruru のメタデータ `https://id.example.com/saml/metadata` を登録します（SSO の URL `…/saml/sso`、証明書を含む）。
 4. 対応がなければ `email`・`name`・`username`・`givenName`・`surname`・`groups` の属性を送ります。
 
+## 複数のホスト名（ドメイン）で使う
+
+管理画面の「ドメイン」でホスト名を登録すると、同じ sruru をそのホスト名でも公開でき、ホスト名ごとにポリシーと表示を変えられます
+（DNS とリバースプロキシは別に設定します。リバースプロキシは `Host` か `X-Forwarded-Host` をそのまま渡します）。
+
+- 各ホスト名は自分の issuer・エンティティ ID を持ちます（`https://<ホスト名>/.well-known/openid-configuration`・`https://<ホスト名>/saml/metadata`）。
+  サービスには、使いたいポリシーのホスト名の URL を設定します。クライアント ID・シークレット・署名鍵は全ホスト名で共通です。
+- ログイン（Cookie）とトークンはホスト名ごとです。あるホスト名で出した認可コード・トークンは、ほかのホスト名では使えません。
+- 外部 IdP をそのホスト名からも使うなら、`https://<ホスト名>/auth/fed/<スラッグ>/callback` も外部 IdP に登録します。
+
 ## SCIM で外部から同期する
 
 1. 管理者で API トークンを作ります（スコープ `scim`）。サービスアカウント（管理画面でユーザーを「サービスアカウント」として作り、管理者にする）に発行するのがおすすめです。

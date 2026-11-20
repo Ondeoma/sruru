@@ -44,28 +44,33 @@ final class Directory(val users: UserStore,
   def isAdmin(u: User, m: Membership): Boolean = u.isAdmin || m.isAdmin
 
   /** アイコンの URL（自分の画像 → 外部 IdP の画像 → Gravatar（設定で有効なとき））. */
-  def pictureUrl(u: User, gravatar: Boolean): Option[String] =
+  def pictureUrl(u: User, p: PoliciesDto): Option[String] = pictureUrl(u, p.branding.gravatar, cfg.urlOf(p.domain))
+
+  private def pictureUrl(u: User, gravatar: Boolean, base: String): Option[String] =
     if u.hasAvatar then
-      Some(s"${cfg.publicUrl}/avatars/${u.id}?v=${u.avatarUpdatedAt.map(_.getEpochSecond).getOrElse(0L)}")
+      Some(s"$base/avatars/${u.id}?v=${u.avatarUpdatedAt.map(_.getEpochSecond).getOrElse(0L)}")
     else
       // Gravatar は確認済みのアドレスのものだけ（未確認のアドレスで他人の顔を出せないように）
       u.pictureUrl.orElse(Option.when(gravatar)(u.verifiedEmail).flatten.map(e =>
         s"https://www.gravatar.com/avatar/${Crypto.hex(Crypto.sha256(e.trim.toLowerCase))}?d=identicon&s=256"
       ))
 
-  def picture(u: User): IO[Option[String]] = policies.get.map(p => pictureUrl(u, p.branding.gravatar))
+  def picture(u: User): IO[Option[String]] = policies.get.map(p => pictureUrl(u, p))
 
   /**
    * OIDC の picture. 他のサービスはログインしたときの値を持ち続けるので、版を付けない決まった URL を渡す.
    * /avatars/{id} が、そのときの自分の画像・代わりの画像（外部 IdP・Gravatar）・404 のどれかを返すので、ログインし直さなくても変更が届く.
    */
-  def claimPicture(u: User): String = s"${cfg.publicUrl}/avatars/${u.id}"
+  def claimPicture(u: User): IO[String] = baseUrl.map(b => s"$b/avatars/${u.id}")
+
+  /** この要求のホスト名の公開 URL. */
+  def baseUrl: IO[String] = cfg.url
 
   /** 式で使う値（{{user.…}}）. */
   def context(u: User): IO[(Json, Membership)] =
     (membership(u), picture(u)).mapN((m, pic) => (Context.user(u, m, pic), m))
 
-  def brief(u: User, gravatar: Boolean): UserBrief = UserBrief(u.id, u.username, u.name, pictureUrl(u, gravatar))
+  def brief(u: User, p: PoliciesDto): UserBrief = UserBrief(u.id, u.username, u.name, pictureUrl(u, p))
 
   // ------------------------------------------------------------------ 名前の確認
 
@@ -226,14 +231,15 @@ final class Directory(val users: UserStore,
           all <- groups.all
           byId = all.map(x => x.id -> x).toMap
           us <- users.all
-          p <- policies.get
+          // 所属の計算は、どのホスト名から操作しても同じ結果にする（全体のポリシーと既定のホスト名の URL を使う）
+          p <- policies.global
           static <- groups.allStatic
           ids = if !ruleUsable(g, byId) then Nil
           else
             us.filterNot(_.isService).filter { u =>
               GroupRule.matches(
                 rule,
-                ruleContext(u, Membership.expand(static.getOrElse(u.id, Nil), byId), pictureUrl(u, p.branding.gravatar))
+                ruleContext(u, Membership.expand(static.getOrElse(u.id, Nil), byId), pictureUrl(u, p))
               )
             }
           _ <- groups.setDynamicForGroup(g.id, ids.map(_.id))
@@ -248,7 +254,7 @@ final class Directory(val users: UserStore,
   def userDto(u: User,
               m: Membership,
               mfa: Boolean,
-              gravatar: Boolean,
+              p: PoliciesDto,
               now: Instant,
               direct: List[UUID] = Nil): UserDto =
     UserDto(
@@ -259,7 +265,7 @@ final class Directory(val users: UserStore,
       u.emailVerified,
       u.givenName,
       u.familyName,
-      pictureUrl(u, gravatar),
+      pictureUrl(u, p),
       u.isAdmin,
       isAdmin(u, m),
       u.isService,

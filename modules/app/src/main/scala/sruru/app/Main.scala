@@ -104,6 +104,7 @@ object Main extends IOApp.Simple {
         mails = new MailStore(xa)
         lock = new JobLock(xa, cfg.api.nodeId)
         policies <- Resource.eval(PolicyService.create(settings))
+        domains <- Resource.eval(Domains.create(new DomainStore(xa), policies, cfg.api))
         keys <- Resource.eval(KeyService.create(tokens, box, "sruru"))
         _ <- Resource.eval(keys.ensure)
         pushStore = new sbirds.push.PushStore(xa)
@@ -116,7 +117,7 @@ object Main extends IOApp.Simple {
         login = new LoginService(dir, sessions, factors, tokens, apps, fedStore, policies, audit, mail, box, cfg.api)
         fed = new FederationService(fedStore, dir, audit, box, http, lock, cfg.api)
         gate = new AuthGate(auth, apps, tokens, dir, policies, audit)
-        claims = new Claims(dir, apps, cfg.api.publicUrl)
+        claims = new Claims(dir, apps)
         oidc = new OidcRoutes(apps, tokens, sessions, dir, keys, claims, gate, auth, audit, http, cfg.api)
         saml = new SamlRoutes(apps, tokens, sessions, dir, keys, gate, auth, audit, cfg.api)
         loginR = new LoginRoutes(
@@ -174,6 +175,7 @@ object Main extends IOApp.Simple {
           auth,
           cfg.api
         )
+        domainR = new DomainRoutes(domains, dir, sessions, fedStore, audit, auth, cfg.api)
         scim = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg.api)
         oauth = new OAuthRoutes(new OAuthStore(xa), dir, auth, audit, cfg.api)
         resume = new ResumeRoutes(tokens, Map("oidc" -> oidc.resume, "saml" -> saml.resume), gate)
@@ -181,7 +183,7 @@ object Main extends IOApp.Simple {
         loops = List[IO[Unit]](
           mail.loop,
           fed.loop,
-          purgeLoop(sessions, dir, tokens, factors, auditStore, mails, settings, policies, lock),
+          purgeLoop(sessions, dir, tokens, factors, auditStore, mails, settings, policies, domains, lock),
           Loops.every(
             10.minutes,
             1.hour,
@@ -189,7 +191,8 @@ object Main extends IOApp.Simple {
           )(lock.exclusive("dynamic-groups", 50.minutes)(dir.recomputeAll))
         )
         _ <- loops.traverse_(_.background)
-        rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+>
+        rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> domainR.routes <+>
+          oidc.routes <+>
           oauth.routes <+> saml.routes <+>
           resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
         app = rest <+> new McpRoutes(rest, auth, cfg.api).routes
@@ -202,12 +205,13 @@ object Main extends IOApp.Simple {
         )(req => if (loginEntry(req)) loginLimit else Nil)
         all = cfg.staticDir.fold(limited)(d => limited <+> Spa.routes(d, Spa.firstSegment(backendPrefixes*)))
         // 本文は 2MB まで（画像は 512KB まで. それより大きな要求で資源を使い切らないように）
+        // 要求ごとに、アクセスしたホスト名からドメインを決める（ポリシー・公開 URL・セッションがそれに従う）
         httpApp <- HttpTelemetry(
           securityHeaders(cfg.api.cookieSecure)(
-            ErrorHandling.Custom.recoverWith(BodyLimit(
+            domains.middleware(ErrorHandling.Custom.recoverWith(BodyLimit(
               2L * 1024 * 1024,
               ErrorCode.RequestTooLarge
-            )(all).orNotFound)(handler)
+            )(all).orNotFound)(handler))
           ),
           tracedPrefixes
         )
@@ -327,24 +331,31 @@ object Main extends IOApp.Simple {
                         mails: MailStore,
                         settings: SettingsStore,
                         policies: PolicyService,
+                        domains: Domains,
                         lock: JobLock): IO[Unit] =
     Loops.every(2.minutes, 1.hour, ErrorCode.PurgeFailed)(lock.exclusive("purge", 50.minutes) {
       for {
         now <- IO.realTimeInstant
-        p <- policies.get
+        p <- policies.global
+        ds <- domains.store.all
         // 消したログインは、トークンの失効とバックチャネルの通知まで行う（自動で終わったログインのトークンを残さない）
         ended <- sessions.purgeLogins(now)
         _ <- ended.traverse_((lid, uid) => dir.endLogin(uid, lid))
-        // 無操作の時間はユーザーごと（グループの上書き）. 全体とグループのうち最も短い時間を過ぎたものを候補にして、ユーザーごとに判定する
+        // 無操作の時間は、ログインしたドメインとユーザーごと（ドメイン・グループの上書き）.
+        // 全体・ドメイン・グループのうち最も短い時間を過ぎたものを候補にして、ドメインとユーザーごとに判定する
         gs <- dir.groups.all
-        idles = (p.session.idleMinutes :: gs.flatMap(_.policy.flatMap(_.session.idleMinutes))).filter(_ > 0)
-        cand <- idles.minOption.fold(IO.pure(List.empty[(java.util.UUID, java.util.UUID, java.time.Instant)]))(mi =>
-          sessions.idleLogins(now.minusSeconds(mi.toLong * 60))
-        )
-        _ <- cand.groupBy(_._2).toList.traverse_ {
-          (uid, ls) =>
+        idles =
+          (p.session.idleMinutes :: ds.flatMap(_.policy.session.idleMinutes) :::
+            gs.flatMap(_.policy.flatMap(_.session.idleMinutes))).filter(_ > 0)
+        cand <-
+          idles.minOption.fold(IO.pure(List.empty[(java.util.UUID, java.util.UUID, java.time.Instant, String)]))(mi =>
+            sessions.idleLogins(now.minusSeconds(mi.toLong * 60))
+          )
+        _ <- cand.groupBy(l => (l._2, l._4)).toList.traverse_ {
+          case ((uid, host), ls) =>
+            // 消されたドメインのログインは、ドメインを消すときに終わらせている（残っていても、既定のポリシーで判定する）
             dir.users.find(uid).flatMap(_.traverse_(u =>
-              dir.policyFor(u).flatMap { up =>
+              Site.within(ds.find(_.host == host))(dir.policyFor(u)).flatMap { up =>
                 ls.filter(l =>
                   up.session.idleMinutes > 0 && l._3.plusSeconds(up.session.idleMinutes.toLong * 60).isBefore(now)
                 )
@@ -357,10 +368,12 @@ object Main extends IOApp.Simple {
         _ <- factors.purgeThrottle(now.minusSeconds(86400))
         _ <- factors.purgeEmailTokens(now)
         _ <- mails.purge(now.minusSeconds(30L * 86400))
-        // 全体・グループのどこからも使われていないロゴ（上げてから1日たったもの）
-        logos = (p.branding.logo.toList ++ gs.flatMap(_.policy.flatMap(_.branding.logo))).flatMap(l =>
-          scala.util.Try(java.util.UUID.fromString(l)).toOption
-        )
+        // 全体・ドメイン・グループのどこからも使われていないロゴ（上げてから1日たったもの）
+        logos =
+          (p.branding.logo.toList ++ ds.flatMap(_.policy.branding.logo) ++
+            gs.flatMap(_.policy.flatMap(_.branding.logo))).flatMap(l =>
+            scala.util.Try(java.util.UUID.fromString(l)).toOption
+          )
         _ <- settings.purgeLogos(logos.toSet, now.minusSeconds(86400))
         _ <-
           IO.whenA(p.audit.retentionDays > 0)(audit.purge(now.minusSeconds(p.audit.retentionDays.toLong * 86400)).void)

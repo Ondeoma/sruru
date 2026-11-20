@@ -19,16 +19,19 @@ final class LogoutNotifier(apps: AppStore, tokens: TokenStore, keys: KeyService,
   /** そのログイン（None ならそのユーザー）にトークンを出したアプリへ送る. */
   def send(u: User, loginId: Option[UUID]): IO[Unit] =
     (apps.allOidc, tokens.appsWithTokens(u.id, loginId)).mapN((cs, used) =>
-      cs.filter(c => used(c.appId) && c.backchannelLogoutUri.isDefined)
+      // 送り先のアプリごと・トークンを出したドメインごとに送る（iss は、そのアプリが使っているホスト名の issuer）
+      used.toList.flatMap((appId, domain) =>
+        cs.find(c => c.appId == appId && c.backchannelLogoutUri.isDefined).map(_ -> domain)
+      )
     )
-      .flatMap(_.traverse_ { c =>
+      .flatMap(_.traverse_ { (c, domain) =>
         (apps.find(c.appId), Time.now).tupled.flatMap {
           case (Some(app), now) if app.enabled =>
             keys.active(c.signingAlg).flatMap { k =>
               val lt = Jose.sign(
                 k,
                 Json.obj(
-                  "iss" -> cfg.issuer.asJson,
+                  "iss" -> cfg.urlOf(domain).asJson,
                   "aud" -> c.clientId.asJson,
                   "iat" -> now.getEpochSecond.asJson,
                   "exp" -> now.plusSeconds(120).getEpochSecond.asJson,

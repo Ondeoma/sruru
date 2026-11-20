@@ -30,9 +30,13 @@ final class FederationService(store: FederationStore,
 
   private val upstream = new UpstreamOidc(http)
 
-  def callbackUrl(slug: String): String = s"${cfg.publicUrl}/auth/fed/$slug/callback"
+  /**
+   * 外部の IdP に登録するリダイレクト URI. ホスト名（ドメイン）ごとに違うので、
+   * ドメインからも外部の IdP を使うなら、そのホスト名の URI も外部の IdP に登録する.
+   */
+  def callbackUrl(slug: String, base: String = cfg.publicUrl): String = s"$base/auth/fed/$slug/callback"
 
-  def upstreamConfig(p: FederationProvider): UpstreamConfig = {
+  private def upstreamConfig(p: FederationProvider, base: String): UpstreamConfig = {
     val extra = p.kind match {
       case "google" => Presets.googleParams(p.allowedDomains.headOption.filter(_ => p.allowedDomains.size == 1))
       case "entra" => Presets.entraParams(true)
@@ -42,7 +46,7 @@ final class FederationService(store: FederationStore,
       p.issuer,
       p.clientId,
       box.decrypt(p.clientSecretEnc).getOrElse(""),
-      callbackUrl(p.slug),
+      callbackUrl(p.slug, base),
       p.scopes.split(' ').filter(_.nonEmpty).toList,
       p.subjectClaim,
       extra
@@ -56,7 +60,7 @@ final class FederationService(store: FederationStore,
     val state = flowId.toString + "." + Crypto.randomToken(16)
     val nonce = Crypto.randomToken(16)
     val verifier = Crypto.randomToken(32)
-    upstream.authorizationUri(upstreamConfig(p), state, nonce, verifier)
+    cfg.url.flatMap(base => upstream.authorizationUri(upstreamConfig(p, base), state, nonce, verifier))
       .map(_ -> Json.obj(
         "slug" -> p.slug.asJson,
         "state" -> state.asJson,
@@ -66,7 +70,7 @@ final class FederationService(store: FederationStore,
   }
 
   def exchange(p: FederationProvider, code: String, verifier: String, nonce: String): IO[UpstreamIdentity] =
-    Time.now.flatMap(now => upstream.exchange(upstreamConfig(p), code, verifier, nonce, now))
+    (Time.now, cfg.url).flatMapN((now, base) => upstream.exchange(upstreamConfig(p, base), code, verifier, nonce, now))
 
   private def allowed(p: FederationProvider): List[String] = p.allowedDomains.map(_.trim.toLowerCase).filter(_.nonEmpty)
 

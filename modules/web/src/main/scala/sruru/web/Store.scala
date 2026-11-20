@@ -25,8 +25,8 @@ object Store {
 
   def myId: Option[UUID] = me.v.map(_.id)
 
-  /** 管理者か. */
-  def isAdmin = me.mapC(_.exists(_.isAdmin))
+  /** 管理者か（管理機能を閉じたホスト名（ドメイン）では、管理者でも管理の画面を出さない）. */
+  def isAdmin = me.mapC(_.exists(_.isAdmin) && config.v.forall(_.adminEnabled))
 
   /** 画面の名前（ポリシーの「表示」で変えられる）. */
   def title = config.mapC(_.map(_.title).filter(_.nonEmpty).getOrElse("sruru"))

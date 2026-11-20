@@ -106,7 +106,7 @@ class VerifiedEmailSpec extends CatsEffectSuite {
             cfg
           )
         val scim = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg)
-        Services(new Claims(dir, apps, cfg.publicUrl), login, (me.routes <+> scim.routes).orNotFound)
+        Services(new Claims(dir, apps), login, (me.routes <+> scim.routes).orNotFound)
       }
 
     def addr(label: String): String = s"$label-${UUID.randomUUID().toString.take(8)}@example.com"

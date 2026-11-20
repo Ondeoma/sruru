@@ -51,36 +51,38 @@ final class OidcRoutes(apps: AppStore,
   }
 
   private def getWellKnownOpenidConfiguration(): IO[Response[IO]] =
-    cors(Ok(discovery))
+    cors(here(Ok(discovery)))
 
   private def getWellKnownOauthAuthorizationServer(): IO[Response[IO]] =
-    cors(Ok(discovery))
+    cors(here(Ok(discovery)))
 
   private def getOauth2Jwks(): IO[Response[IO]] =
     cors(keys.jwks.flatMap(j => Ok(j).map(_.putHeaders("Cache-Control" -> "public, max-age=300"))))
 
   private def getOauth2Authorize(req: Request[IO]): IO[Response[IO]] =
-    authorize(req)
+    here(authorize(req))
 
   private def postOauth2Token(req: Request[IO]): IO[Response[IO]] =
-    cors(token(req))
+    cors(here(token(req)))
 
   private def getOauth2Userinfo(req: Request[IO]): IO[Response[IO]] =
-    cors(userinfo(req))
+    cors(here(userinfo(req)))
 
   private def postOauth2Introspect(req: Request[IO]): IO[Response[IO]] =
-    introspect(req)
+    here(introspect(req))
 
   private def postOauth2Revoke(req: Request[IO]): IO[Response[IO]] =
-    revoke(req)
+    here(revoke(req))
 
   private def getOauth2Logout(req: Request[IO]): IO[Response[IO]] =
-    endSession(req)
+    here(endSession(req))
 
   private def optionsOauth2(): IO[Response[IO]] =
     cors(IO.pure(Response[IO](Status.NoContent).putHeaders("Access-Control-Allow-Methods" -> "GET, POST")))
 
-  private val iss = cfg.issuer
+  /** この要求のホスト名の issuer・ドメインを決めてから処理する（issuer はホスト名ごと）. */
+  private def here[A](f: Here ?=> IO[A]): IO[A] = cfg.here.flatMap(h => f(using h))
+  private def iss(using h: Here): String = h.url
   private val SupportedScopes = List("openid", "profile", "email", "phone", "groups", "offline_access")
 
   // ------------------------------------------------------------------ 補助
@@ -165,7 +167,7 @@ final class OidcRoutes(apps: AppStore,
 
   // ------------------------------------------------------------------ メタデータ
 
-  def discovery: Json = Json.obj(
+  def discovery(using Here): Json = Json.obj(
     "issuer" -> iss.asJson,
     "authorization_endpoint" -> s"$iss/oauth2/authorize".asJson,
     "token_endpoint" -> s"$iss/oauth2/token".asJson,
@@ -215,7 +217,7 @@ final class OidcRoutes(apps: AppStore,
 
   // ------------------------------------------------------------------ 認可
 
-  private def authorize(req: Request[IO]): IO[Response[IO]] =
+  private def authorize(req: Request[IO])(using h: Here): IO[Response[IO]] =
     params(req).flatMap { p =>
       p.get("client_id").fold(gate.errorPage("client_id がありません"))(cid =>
         apps.byClientId(cid).flatMap {
@@ -262,8 +264,8 @@ final class OidcRoutes(apps: AppStore,
                       "scope" -> scopes.mkString(" ").asJson
                     ))
                   Time.now.flatMap(now =>
-                    tokens.createRequest(app.id, "oidc", stored, AuthRequests.expires(now))
-                  ).flatMap(r => resume(req, r))
+                    tokens.createRequest(app.id, "oidc", stored, AuthRequests.expires(now), h.domain)
+                  ).flatMap(r => resumeHere(req, r))
                 }
             }
         }
@@ -271,7 +273,9 @@ final class OidcRoutes(apps: AppStore,
     }
 
   /** ログイン・同意の後に、認可コードを発行してクライアントへ戻す. */
-  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = {
+  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = here(resumeHere(req, r))
+
+  private def resumeHere(req: Request[IO], r: AuthRequest)(using h: Here): IO[Response[IO]] = {
     val pc = r.params.hcursor
     def str(k: String) = pc.get[String](k).toOption
     (apps.find(r.appId), apps.oidc(r.appId)).tupled.flatMap {
@@ -318,7 +322,8 @@ final class OidcRoutes(apps: AppStore,
                       login.authTime,
                       login.amr,
                       now.plusSeconds(60),
-                      None
+                      None,
+                      h.domain
                     )
                   )
                   _ <- tokens.deleteRequest(r.id)
@@ -347,7 +352,7 @@ final class OidcRoutes(apps: AppStore,
                           userId: Option[UUID],
                           loginId: Option[UUID],
                           scopes: List[String],
-                          now: Instant): IO[(String, Int)] = {
+                          now: Instant)(using h: Here): IO[(String, Int)] = {
     val jti = UUID.randomUUID()
     val exp = now.plusSeconds(c.accessTokenTtl.toLong)
     keys.active(c.signingAlg).flatMap { k =>
@@ -366,7 +371,7 @@ final class OidcRoutes(apps: AppStore,
         ),
         "at+jwt"
       )
-      tokens.recordAccess(AccessTokenRow(jti, app.map(_.id), userId, loginId, scopes, exp, None)).as((
+      tokens.recordAccess(AccessTokenRow(jti, app.map(_.id), userId, loginId, scopes, exp, None, h.domain)).as((
         jwt,
         c.accessTokenTtl
       ))
@@ -393,7 +398,7 @@ final class OidcRoutes(apps: AppStore,
                     amr: List[String],
                     nonce: Option[String],
                     family: Option[UUID],
-                    now: Instant): IO[Json] =
+                    now: Instant)(using h: Here): IO[Json] =
     for {
       m <- dir.membership(u)
       sub = claims.sub(u, c)
@@ -431,7 +436,8 @@ final class OidcRoutes(apps: AppStore,
           scopes,
           authTime,
           amr,
-          now.plusSeconds(c.refreshTokenTtl.toLong)
+          now.plusSeconds(c.refreshTokenTtl.toLong),
+          h.domain
         ).as(Some(t))
       }
       _ <- issued(grant, if idToken.isDefined then "oidc" else "oauth2")
@@ -461,7 +467,7 @@ final class OidcRoutes(apps: AppStore,
   private val Grants = Set("authorization_code", "refresh_token", "client_credentials")
 
   /** トークンのエンドポイント. スパン・メトリクスには grant_type と結果だけを載せる（コード・トークン・クライアントシークレットは載せない）. */
-  private def token(req: Request[IO]): IO[Response[IO]] =
+  private def token(req: Request[IO])(using Here): IO[Response[IO]] =
     params(req).flatMap { f =>
       val grant = f.getOrElse("grant_type", "")
       val label = if Grants(grant) then grant else "other"
@@ -474,7 +480,7 @@ final class OidcRoutes(apps: AppStore,
       )
     }
 
-  private def tokenFor(req: Request[IO], f: Map[String, String], grant: String): IO[Response[IO]] =
+  private def tokenFor(req: Request[IO], f: Map[String, String], grant: String)(using h: Here): IO[Response[IO]] =
     clientAuth(req, f).flatMap {
       case Left(e) => oauthErr(e)
       case Right((app, c)) =>
@@ -484,7 +490,7 @@ final class OidcRoutes(apps: AppStore,
             grant match {
               case "authorization_code" =>
                 f.get("code").fold(oauthErr(OAuthError("invalid_request", "code がありません"))) { code =>
-                  tokens.useCode(Crypto.sha256(code), app.id, now).flatMap {
+                  tokens.useCode(Crypto.sha256(code), app.id, now, h.domain).flatMap {
                     case None => oauthErr(OAuthError("invalid_grant", "認可コードが無効か期限切れです"))
                     case Some(Left(used)) =>
                       // 認可コードの再利用: そのコードで発行したトークン（系列ごと. offline_access も）を失効させる
@@ -524,7 +530,10 @@ final class OidcRoutes(apps: AppStore,
               case "refresh_token" =>
                 f.get("refresh_token").fold(oauthErr(OAuthError("invalid_request", "refresh_token がありません"))) { rt =>
                   tokens.refresh(Crypto.sha256(rt)).flatMap {
-                    case Some(t) if t.appId == app.id && t.revokedAt.isEmpty && t.expiresAt.isAfter(now) =>
+                    // ほかのドメインで出したリフレッシュトークンは「ない」ものとして扱う
+                    case Some(t)
+                        if t.appId == app.id && t.domain == h.domain && t.revokedAt.isEmpty &&
+                          t.expiresAt.isAfter(now) =>
                       if t.usedAt.isDefined then
                         // 再利用（盗まれた可能性）: 系列ごと失効させる
                         tokens.revokeFamilyWithAccess(t) *>
@@ -585,8 +594,8 @@ final class OidcRoutes(apps: AppStore,
 
   // ------------------------------------------------------------------ アクセストークンの検証
 
-  /** 自分が発行したアクセストークン（署名・期限・失効を確かめる）. */
-  def verifyAccess(at: String): IO[Option[(Json, AccessTokenRow)]] =
+  /** このホスト名（issuer）で発行したアクセストークン（署名・期限・失効を確かめる）. */
+  private def verifyAccess(at: String)(using Here): IO[Option[(Json, AccessTokenRow)]] =
     keys.publicJwks.flatMap { ks =>
       val ok = for {
         h <- Jose.header(at).toOption
@@ -608,7 +617,7 @@ final class OidcRoutes(apps: AppStore,
       form.get("access_token").filter(_ => req.method == Method.POST)
     )
 
-  private def userinfo(req: Request[IO]): IO[Response[IO]] =
+  private def userinfo(req: Request[IO])(using Here): IO[Response[IO]] =
     params(req).flatMap { f =>
       def unauthorized(e: String) =
         IO.pure(Response[IO](Status.Unauthorized).putHeaders(
@@ -639,7 +648,7 @@ final class OidcRoutes(apps: AppStore,
       )
     }
 
-  private def introspect(req: Request[IO]): IO[Response[IO]] =
+  private def introspect(req: Request[IO])(using h: Here): IO[Response[IO]] =
     params(req).flatMap { f =>
       clientAuth(req, f).flatMap {
         case Left(e) => oauthErr(e)
@@ -673,7 +682,8 @@ final class OidcRoutes(apps: AppStore,
               case None =>
                 (tokens.refresh(Crypto.sha256(t)), Time.now).tupled.flatMap {
                   case (Some(rt), now)
-                      if rt.appId == app.id && rt.revokedAt.isEmpty && rt.usedAt.isEmpty && rt.expiresAt.isAfter(now) =>
+                      if rt.appId == app.id && rt.domain == h.domain && rt.revokedAt.isEmpty && rt.usedAt.isEmpty &&
+                        rt.expiresAt.isAfter(now) =>
                     dir.users.find(rt.userId).flatMap {
                       case Some(u) => (stillAllowed(app, u), loginAlive(rt.loginId, now)).tupled.flatMap {
                           case (true, true) => json(Json.obj(
@@ -696,7 +706,7 @@ final class OidcRoutes(apps: AppStore,
       }
     }
 
-  private def revoke(req: Request[IO]): IO[Response[IO]] =
+  private def revoke(req: Request[IO])(using Here): IO[Response[IO]] =
     params(req).flatMap { f =>
       clientAuth(req, f).flatMap {
         case Left(e) => oauthErr(e)
@@ -716,7 +726,7 @@ final class OidcRoutes(apps: AppStore,
 
   // ------------------------------------------------------------------ ログアウト
 
-  private def endSession(req: Request[IO]): IO[Response[IO]] =
+  private def endSession(req: Request[IO])(using Here): IO[Response[IO]] =
     params(req).flatMap { f =>
       for {
         ks <- keys.publicJwks

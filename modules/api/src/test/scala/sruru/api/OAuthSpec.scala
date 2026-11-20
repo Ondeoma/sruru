@@ -133,7 +133,7 @@ class OAuthSpec extends CatsEffectSuite {
           keys,
           me,
           login,
-          new Claims(dir, apps, cfg.publicUrl),
+          new Claims(dir, apps),
           policies,
           audit,
           mail,

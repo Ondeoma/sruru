@@ -16,7 +16,9 @@ final case class AuthRequest(id: UUID,
                              protocol: String,
                              params: Json,
                              createdAt: Instant,
-                             expiresAt: Instant)
+                             expiresAt: Instant,
+                             /** 要求を受けたドメイン（既定のホスト名なら空）. 続きは同じドメインでだけ行う */
+                             domain: String = "")
 
 final case class AuthCode(appId: UUID,
                           userId: UUID,
@@ -29,7 +31,9 @@ final case class AuthCode(appId: UUID,
                           authTime: Instant,
                           amr: List[String],
                           expiresAt: Instant,
-                          usedAt: Option[Instant])
+                          usedAt: Option[Instant],
+                          /** 発行したドメイン. 同じドメインのトークンのエンドポイントでだけ使える */
+                          domain: String = "")
 
 final case class RefreshToken(id: UUID,
                               family: UUID,
@@ -42,7 +46,8 @@ final case class RefreshToken(id: UUID,
                               createdAt: Instant,
                               expiresAt: Instant,
                               usedAt: Option[Instant],
-                              revokedAt: Option[Instant])
+                              revokedAt: Option[Instant],
+                              domain: String = "")
 
 final case class AccessTokenRow(jti: UUID,
                                 appId: Option[UUID],
@@ -50,7 +55,8 @@ final case class AccessTokenRow(jti: UUID,
                                 loginId: Option[UUID],
                                 scopes: List[String],
                                 expiresAt: Instant,
-                                revokedAt: Option[Instant])
+                                revokedAt: Option[Instant],
+                                domain: String = "")
 
 final case class StoredKey(kid: String,
                            alg: String,
@@ -67,15 +73,20 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   // ------------------------------------------------------------------ 認可の要求
 
-  def createRequest(appId: UUID, protocol: String, params: Json, expiresAt: Instant): IO[AuthRequest] = {
-    val r = AuthRequest(UUID.randomUUID(), appId, protocol, params, Instant.now(), expiresAt)
+  def createRequest(appId: UUID,
+                    protocol: String,
+                    params: Json,
+                    expiresAt: Instant,
+                    domain: String = ""): IO[AuthRequest] = {
+    val r = AuthRequest(UUID.randomUUID(), appId, protocol, params, Instant.now(), expiresAt, domain)
     tx(
-      sql"insert into auth_requests (id, app_id, protocol, params, expires_at) values (${r.id}, $appId, $protocol, $params, $expiresAt)".update.run
+      sql"""insert into auth_requests (id, app_id, protocol, params, expires_at, domain)
+            values (${r.id}, $appId, $protocol, $params, $expiresAt, $domain)""".update.run
     ).as(r)
   }
 
   def request(id: UUID, now: Instant): IO[Option[AuthRequest]] =
-    tx(sql"select id, app_id, protocol, params, created_at, expires_at from auth_requests where id = $id and expires_at > $now".query[
+    tx(sql"select id, app_id, protocol, params, created_at, expires_at, domain from auth_requests where id = $id and expires_at > $now".query[
       AuthRequest
     ].option)
 
@@ -88,19 +99,24 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   def createCode(hash: Array[Byte], c: AuthCode): IO[Unit] = tx(
     sql"""insert into auth_codes (code_hash, app_id, user_id, login_id, redirect_uri, scopes, nonce, code_challenge, challenge_method,
-            auth_time, amr, expires_at)
+            auth_time, amr, expires_at, domain)
           values ($hash, ${c.appId}, ${c.userId}, ${c.loginId}, ${c.redirectUri}, ${c.scopes.toArray}, ${c.nonce}, ${c.codeChallenge},
-            ${c.challengeMethod}, ${c.authTime}, ${c.amr.toArray}, ${c.expiresAt})""".update.run.void
+            ${c.challengeMethod}, ${c.authTime}, ${c.amr.toArray}, ${c.expiresAt}, ${c.domain})""".update.run.void
   )
 
   /**
    * 認可コードを使う（appId のクライアントのものだけ）. 1回目は Right(コード). 2回目以降は Left(コード)（RFC 6749 4.1.2: 発行したトークンを失効させるため）.
-   * 期限切れ・存在しなければ None.
+   * 期限切れ・存在しなければ None. 発行したドメイン（domain）のトークンのエンドポイントでだけ使える.
    */
-  def useCode(hash: Array[Byte], appId: UUID, now: Instant): IO[Option[Either[AuthCode, AuthCode]]] = tx(
-    // 他のクライアントが提示したコードは「ない」ものとして扱う（使用済みにも、再利用の失効の引き金にもさせない）
-    sql"""select app_id, user_id, login_id, redirect_uri, scopes, nonce, code_challenge, challenge_method, auth_time, amr, expires_at, used_at
-          from auth_codes where code_hash = $hash and app_id = $appId for update""".query[AuthCode].option.flatMap {
+  def useCode(hash: Array[Byte],
+              appId: UUID,
+              now: Instant,
+              domain: String = ""): IO[Option[Either[AuthCode, AuthCode]]] = tx(
+    // 他のクライアントが提示したコード・ほかのドメインで出したコードは「ない」ものとして扱う（使用済みにも、再利用の失効の引き金にもさせない）
+    sql"""select app_id, user_id, login_id, redirect_uri, scopes, nonce, code_challenge, challenge_method, auth_time, amr, expires_at, used_at, domain
+          from auth_codes where code_hash = $hash and app_id = $appId and domain = $domain for update""".query[
+      AuthCode
+    ].option.flatMap {
       case None => none[Either[AuthCode, AuthCode]].pure[ConnectionIO]
       // 使用済みなら期限が過ぎていても再利用として扱う（行は1日残る. 期限の後の再利用でも発行したトークンを失効させる）
       case Some(c) if c.usedAt.isDefined => Some(Left(c)).pure[ConnectionIO]
@@ -112,7 +128,7 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
   // ------------------------------------------------------------------ リフレッシュトークン
 
   private val rtCols =
-    fr"id, family, app_id, user_id, login_id, scopes, auth_time, amr, created_at, expires_at, used_at, revoked_at"
+    fr"id, family, app_id, user_id, login_id, scopes, auth_time, amr, created_at, expires_at, used_at, revoked_at, domain"
 
   def createRefresh(hash: Array[Byte],
                     family: UUID,
@@ -122,11 +138,12 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
                     scopes: List[String],
                     authTime: Instant,
                     amr: List[String],
-                    expiresAt: Instant): IO[UUID] = {
+                    expiresAt: Instant,
+                    domain: String = ""): IO[UUID] = {
     val id = UUID.randomUUID()
     tx(
-      sql"""insert into refresh_tokens (id, token_hash, family, app_id, user_id, login_id, scopes, auth_time, amr, expires_at)
-             values ($id, $hash, $family, $appId, $userId, $loginId, ${scopes.toArray}, $authTime, ${amr.toArray}, $expiresAt)""".update.run
+      sql"""insert into refresh_tokens (id, token_hash, family, app_id, user_id, login_id, scopes, auth_time, amr, expires_at, domain)
+             values ($id, $hash, $family, $appId, $userId, $loginId, ${scopes.toArray}, $authTime, ${amr.toArray}, $expiresAt, $domain)""".update.run
     ).as(id)
   }
 
@@ -183,12 +200,15 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
             and (login_id is not distinct from ${c.loginId} or login_id is null) and revoked_at is null""".update.run.void
   )
 
-  /** トークンを出したことのあるアプリ（バックチャネルのログアウトの送り先）. loginId を指定すればそのログインの分だけ. */
-  def appsWithTokens(userId: UUID, loginId: Option[UUID]): IO[Set[UUID]] = {
+  /**
+   * トークンを出したことのあるアプリと、出したドメイン（バックチャネルのログアウトの送り先と、そのときの issuer）.
+   * loginId を指定すればそのログインの分だけ.
+   */
+  def appsWithTokens(userId: UUID, loginId: Option[UUID]): IO[Set[(UUID, String)]] = {
     val byLogin = loginId.fold(Fragment.empty)(l => fr"and login_id = $l")
-    tx(((fr"select app_id from refresh_tokens where user_id = $userId" ++ byLogin) ++ fr"union" ++
-      (fr"select app_id from access_tokens where app_id is not null and user_id = $userId" ++ byLogin)).query[
-      UUID
+    tx(((fr"select app_id, domain from refresh_tokens where user_id = $userId" ++ byLogin) ++ fr"union" ++
+      (fr"select app_id, domain from access_tokens where app_id is not null and user_id = $userId" ++ byLogin)).query[
+      (UUID, String)
     ].to[List].map(_.toSet))
   }
 
@@ -201,14 +221,16 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
   // ------------------------------------------------------------------ アクセストークン
 
   def recordAccess(t: AccessTokenRow): IO[Unit] = tx(
-    sql"""insert into access_tokens (jti, app_id, user_id, login_id, scopes, expires_at)
-          values (${t.jti}, ${t.appId}, ${t.userId}, ${t.loginId}, ${t.scopes.toArray}, ${t.expiresAt})""".update.run.void
+    sql"""insert into access_tokens (jti, app_id, user_id, login_id, scopes, expires_at, domain)
+          values (${t.jti}, ${t.appId}, ${t.userId}, ${t.loginId}, ${t.scopes.toArray}, ${t.expiresAt}, ${t.domain})""".update.run.void
   )
 
   def access(jti: UUID): IO[Option[AccessTokenRow]] =
-    tx(sql"select jti, app_id, user_id, login_id, scopes, expires_at, revoked_at from access_tokens where jti = $jti".query[
-      AccessTokenRow
-    ].option)
+    tx(
+      sql"select jti, app_id, user_id, login_id, scopes, expires_at, revoked_at, domain from access_tokens where jti = $jti".query[
+        AccessTokenRow
+      ].option
+    )
 
   def revokeAccess(jti: UUID): IO[Unit] =
     tx(sql"update access_tokens set revoked_at = now() where jti = $jti".update.run.void)

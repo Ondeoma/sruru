@@ -32,7 +32,7 @@ final class SessionAuth(sessions: SessionStore,
 
   /** この要求で提示されたクライアント証明書のチェーン（TLS か、信頼するプロキシからのヘッダー）. */
   def presentedChain(req: Request[IO]): IO[Option[List[java.security.cert.X509Certificate]]] =
-    policies.get.map { p =>
+    policies.global.map { p =>
       val remote = req.remote.map(_.host.toString).getOrElse("-")
       val fromTls =
         req.attributes.lookup(ServerRequestKeys.SecureSession).flatten.map(_.X509Certificate).filter(_.nonEmpty)
@@ -46,7 +46,7 @@ final class SessionAuth(sessions: SessionStore,
     }
 
   def reqCtx(req: Request[IO]): IO[ReqCtx] =
-    policies.get.map { p =>
+    policies.global.map { p =>
       val remote = req.remote.map(_.host.toString).getOrElse("-")
       val ip = IpRules.clientIp(
         remote,
@@ -61,9 +61,12 @@ final class SessionAuth(sessions: SessionStore,
   def ipAllowed(req: Request[IO], u: User, m: Membership): IO[Boolean] =
     (reqCtx(req), dir.policyFor(u, m)).mapN((c, p) => IpRules.allowedBy(c.ip, p.ip))
 
+  /** このホスト名（ドメイン）で管理画面・管理 API を使えるか. */
+  def adminEnabled: IO[Boolean] = Site.current.map(_.forall(_.policy.admin))
+
   /** 管理機能の IP 制限. */
   def adminIpAllowed(req: Request[IO]): IO[Boolean] =
-    (reqCtx(req), policies.get).mapN((c, p) => p.ip.adminAllow.isEmpty || IpRules.matches(c.ip, p.ip.adminAllow))
+    (reqCtx(req), policies.global).mapN((c, p) => p.ip.adminAllow.isEmpty || IpRules.matches(c.ip, p.ip.adminAllow))
 
   // ------------------------------------------------------------------ ブラウザのセッション
 
@@ -71,7 +74,10 @@ final class SessionAuth(sessions: SessionStore,
     req.cookies.find(_.name == cfg.cookieName).map(_.content).filter(_.nonEmpty)
 
   def browser(req: Request[IO]): IO[Option[BrowserSession]] =
-    token(req).fold(IO.pure(None))(t => Time.now.flatMap(now => sessions.findBrowser(Crypto.sha256(t), now)))
+    // 作ったときと同じドメイン（ホスト名）のセッションだけ（ほかのホスト名の Cookie を持ち込んでも使えない）
+    token(req).fold(IO.pure(None))(t =>
+      (Time.now, Site.host).flatMapN((now, d) => sessions.findBrowser(Crypto.sha256(t), now, d))
+    )
 
   /** ブラウザのセッション（なければ作り、Cookie を返す）. */
   def ensureBrowser(req: Request[IO]): IO[(BrowserSession, Option[ResponseCookie])] =
@@ -84,7 +90,7 @@ final class SessionAuth(sessions: SessionStore,
           now <- Time.now
           t = Crypto.randomToken()
           ttl = p.session.lifetimeHours.toLong * 3600
-          b <- sessions.createBrowser(Crypto.sha256(t), c.ip, c.userAgent, now.plusSeconds(ttl))
+          b <- sessions.createBrowser(Crypto.sha256(t), c.ip, c.userAgent, now.plusSeconds(ttl), p.domain)
         } yield (b, Some(cookie(t, ttl)))
     }
 

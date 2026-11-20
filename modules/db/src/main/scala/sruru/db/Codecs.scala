@@ -15,4 +15,6 @@ object Codecs {
   given Put[sruru.core.GroupRule] = jsonPut
   given Get[sruru.shared.GroupPolicy] = jsonGet
   given Put[sruru.shared.GroupPolicy] = jsonPut
+  given Get[sruru.shared.DomainPolicy] = jsonGet
+  given Put[sruru.shared.DomainPolicy] = jsonPut
 }

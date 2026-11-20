@@ -160,7 +160,26 @@ final class ScimRoutes(dir: Directory,
   private val ScimType = `Content-Type`(new MediaType("application", "scim+json"), Charset.`UTF-8`)
 
   private def scim(status: Status, j: Json): IO[Response[IO]] =
-    IO.pure(Response[IO](status).withEntity(j.dropNullValues).withContentType(ScimType))
+    cfg.url.map(u => Response[IO](status).withEntity(here(j.dropNullValues, u)).withContentType(ScimType))
+
+  /** location・$ref の URL を、要求のホスト名のものにする（中では既定のホスト名で組み立てている）. */
+  private def here(j: Json, url: String): Json =
+    if url == cfg.publicUrl then j
+    else {
+      def go(x: Json): Json = x.arrayOrObject(
+        x,
+        a => Json.fromValues(a.map(go)),
+        o =>
+          Json.fromFields(o.toIterable.map {
+            case (k @ ("location" | "$ref"), v) =>
+              k -> v.asString.filter(_.startsWith(Base)).fold(go(v))(s =>
+                Json.fromString(s"$url/scim/v2" + s.drop(Base.length))
+              )
+            case (k, v) => k -> go(v)
+          })
+      )
+      go(j)
+    }
 
   /** SCIM の形式のエラーの応答（コード付きでログに出る. 本文は SCIM の決まりどおり）. */
   private def scimErr(code: ErrorCode,
@@ -348,7 +367,7 @@ final class ScimRoutes(dir: Directory,
   private def usersOut(us: List[User]): IO[List[Json]] =
     (dir.groups.memberships(us.map(_.id)), dir.users.attributeDefs, policies.get).mapN {
       (ms, defs, p) =>
-        us.map(u => userJson(u, ms.getOrElse(u.id, Membership(Nil)), defs, dir.pictureUrl(u, p.branding.gravatar)))
+        us.map(u => userJson(u, ms.getOrElse(u.id, Membership(Nil)), defs, dir.pictureUrl(u, p)))
     }
 
   private def listResponse(items: List[Json], total: Int, start: Int): Json =

@@ -117,4 +117,9 @@ final case class PoliciesDto(password: PasswordPolicy = PasswordPolicy(),
                              ip: IpPolicy = IpPolicy(),
                              cert: CertAuthPolicy = CertAuthPolicy(),
                              branding: Branding = Branding(),
-                             audit: AuditPolicy = AuditPolicy()) derives ConfiguredCodec
+                             audit: AuditPolicy = AuditPolicy(),
+                             /**
+                              * この要求のドメイン（アクセスしたホスト名. 既定のホスト名なら空）.
+                              * 要求ごとにポリシーを読んだときだけ入る（全体の設定には保存しない）
+                              */
+                             domain: String = "") derives ConfiguredCodec

@@ -32,50 +32,52 @@ final class SamlRoutes(apps: AppStore,
   }
 
   private def getSamlMetadata(): IO[Response[IO]] =
-    keys.saml.flatMap(k =>
+    here(keys.saml.flatMap(k =>
       Ok(Saml.idpMetadata(entityId, ssoUrl, sloUrl, k.cert.get))
         .map(_.withContentType(`Content-Type`(MediaType.application.xml)).putHeaders("Access-Control-Allow-Origin" ->
           "*"))
-    )
+    ))
 
   private def getSamlSso(req: Request[IO]): IO[Response[IO]] =
     Saml.redirectParams(rawQuery(req)) match {
       case Left(e) => gate.errorPage(s"SAML の要求を読めません: $e")
       case Right(ps) =>
         ps.get("SAMLRequest").fold(gate.errorPage("SAMLRequest がありません"))(p =>
-          sso(req, Saml.decodeRedirect(p), ps.get("RelayState"), Some(rawQuery(req)))
+          here(sso(req, Saml.decodeRedirect(p), ps.get("RelayState"), Some(rawQuery(req))))
         )
     }
 
   private def postSamlSso(req: Request[IO]): IO[Response[IO]] =
     req.as[UrlForm].flatMap(f =>
       withCookie(req, f)(f.getFirst("SAMLRequest").fold(gate.errorPage("SAMLRequest がありません"))(p =>
-        sso(req, Saml.decodePost(p), f.getFirst("RelayState"), None)
+        here(sso(req, Saml.decodePost(p), f.getFirst("RelayState"), None))
       ))
     )
 
   private def getSamlIdp(req: Request[IO], slug: String): IO[Response[IO]] =
-    idpInitiated(req, slug)
+    here(idpInitiated(req, slug))
 
   private def getSamlSlo(req: Request[IO]): IO[Response[IO]] =
     Saml.redirectParams(rawQuery(req)) match {
       case Left(e) => gate.errorPage(s"SAML のログアウトの要求を読めません: $e")
       case Right(ps) =>
         ps.get("SAMLRequest").fold(gate.redirect("/logged-out"))(p =>
-          slo(req, Saml.decodeRedirect(p), ps.get("RelayState"), Some(rawQuery(req)))
+          here(slo(req, Saml.decodeRedirect(p), ps.get("RelayState"), Some(rawQuery(req))))
         )
     }
 
   private def postSamlSlo(req: Request[IO]): IO[Response[IO]] =
     req.as[UrlForm].flatMap(f =>
       withCookie(req, f)(f.getFirst("SAMLRequest").fold(gate.redirect("/logged-out"))(p =>
-        slo(req, Saml.decodePost(p), f.getFirst("RelayState"), None)
+        here(slo(req, Saml.decodePost(p), f.getFirst("RelayState"), None))
       ))
     )
 
-  val entityId: String = s"${cfg.publicUrl}/saml/metadata"
-  private val ssoUrl = s"${cfg.publicUrl}/saml/sso"
-  private val sloUrl = s"${cfg.publicUrl}/saml/slo"
+  /** この要求のホスト名の URL・ドメインを決めてから処理する（エンティティ ID・SSO・SLO の URL はホスト名ごと）. */
+  private def here[A](f: Here ?=> IO[A]): IO[A] = cfg.here.flatMap(h => f(using h))
+  private def entityId(using h: Here): String = s"${h.url}/saml/metadata"
+  private def ssoUrl(using h: Here): String = s"${h.url}/saml/sso"
+  private def sloUrl(using h: Here): String = s"${h.url}/saml/slo"
 
   private def html(body: String, nonce: String): IO[Response[IO]] =
     Ok(body).map(_.withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
@@ -115,7 +117,7 @@ final class SamlRoutes(apps: AppStore,
   private def sso(req: Request[IO],
                   xml: Either[String, String],
                   relay: Option[String],
-                  redirectQuery: Option[String]): IO[Response[IO]] =
+                  redirectQuery: Option[String])(using h: Here): IO[Response[IO]] =
     xml.flatMap(Saml.parseAuthnRequest) match {
       case Left(e) => gate.errorPage(s"SAML の要求を読めません: $e")
       case Right(ar) =>
@@ -143,29 +145,34 @@ final class SamlRoutes(apps: AppStore,
                 "forceAuthn" -> ar.forceAuthn.asJson,
                 "isPassive" -> ar.isPassive.asJson
               )
-              Time.now.flatMap(now => tokens.createRequest(app.id, "saml", params, AuthRequests.expires(now))).flatMap(
-                resume(req, _)
+              Time.now.flatMap(now =>
+                tokens.createRequest(app.id, "saml", params, AuthRequests.expires(now), h.domain)
+              ).flatMap(
+                resumeHere(req, _)
               )
             }
         }
     }
 
   /** IdP 起点の SSO（ポータルからの起動）. */
-  private def idpInitiated(req: Request[IO], slug: String): IO[Response[IO]] =
+  private def idpInitiated(req: Request[IO], slug: String)(using h: Here): IO[Response[IO]] =
     apps.bySlug(slug).flatMap {
       case Some(app) if app.protocol == "saml" =>
         // RelayState は仕様の上限（80 バイト）まで
         val params =
           Json.obj("relayState" -> req.params.get("RelayState").filter(_.getBytes("UTF-8").length <= 80).asJson)
-        Time.now.flatMap(now => tokens.createRequest(app.id, "saml", params, AuthRequests.expires(now))).flatMap(resume(
-          req,
-          _
-        ))
+        Time.now.flatMap(now =>
+          tokens.createRequest(app.id, "saml", params, AuthRequests.expires(now), h.domain)
+        ).flatMap(
+          resumeHere(req, _)
+        )
       case _ => gate.errorPage("SAML のアプリケーションが見つかりません")
     }
 
   /** ログインの後に、署名したアサーションを SP へ POST する. */
-  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = {
+  def resume(req: Request[IO], r: AuthRequest): IO[Response[IO]] = here(resumeHere(req, r))
+
+  private def resumeHere(req: Request[IO], r: AuthRequest)(using Here): IO[Response[IO]] = {
     val pc = r.params.hcursor
     (apps.find(r.appId), apps.saml(r.appId)).tupled.flatMap {
       case (Some(app), Some(s)) =>
@@ -259,7 +266,7 @@ final class SamlRoutes(apps: AppStore,
   private def slo(req: Request[IO],
                   xml: Either[String, String],
                   relay: Option[String],
-                  redirectQuery: Option[String]): IO[Response[IO]] =
+                  redirectQuery: Option[String])(using h: Here): IO[Response[IO]] =
     xml.flatMap(Saml.parseLogoutRequest) match {
       case Left(e) => gate.errorPage(s"SAML のログアウトの要求を読めません: $e")
       case Right(lr) =>

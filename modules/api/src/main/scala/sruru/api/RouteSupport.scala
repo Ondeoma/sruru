@@ -104,7 +104,11 @@ trait RouteSupport extends sbirds.http.RouteHelpers {
   protected def admin(req: Request[IO])(f: Principal => IO[Response[IO]]): IO[Response[IO]] =
     authed(req) { p =>
       if !p.canAdmin then err(ErrorCode.AdminOnly)
-      else auth.adminIpAllowed(req).ifM(f(p), err(ErrorCode.AdminIpDenied))
+      else
+        auth.adminEnabled.ifM(
+          auth.adminIpAllowed(req).ifM(f(p), err(ErrorCode.AdminIpDenied)),
+          err(ErrorCode.AdminDisabledOnDomain)
+        )
     }
 
   /** 監査ログに書く（要求元はこの要求から）. */

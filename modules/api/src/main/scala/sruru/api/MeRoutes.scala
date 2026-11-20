@@ -234,12 +234,12 @@ final class MeRoutes(dir: Directory,
 
   private def getMeConsents(req: Request[IO]): IO[Response[IO]] =
     authed(req) { p =>
-      (apps.consents(p.id), Time.now.flatMap(now => tokens.grantsOf(p.id, now)), apps.all).flatMapN {
-        (cs, gs, as) =>
+      (apps.consents(p.id), Time.now.flatMap(now => tokens.grantsOf(p.id, now)), apps.all, login.appBrief).flatMapN {
+        (cs, gs, as, appBrief) =>
           val byApp = (cs.map((a, s, t) => (a, s, t)) ++ gs.map((a, s, t) => (a, s, t))).groupBy(_._1)
           Ok(byApp.toList.flatMap((aid, rows) =>
             as.find(_.id == aid).map(a =>
-              ConsentDto(login.appBrief(a), rows.flatMap(_._2).distinct, rows.map(_._3).max)
+              ConsentDto(appBrief(a), rows.flatMap(_._2).distinct, rows.map(_._3).max)
             )
           ))
       }
@@ -284,7 +284,7 @@ final class MeRoutes(dir: Directory,
                 mail.send(
                   e,
                   s"${pol.branding.title} のメールアドレスの確認",
-                  s"${p.user.name} さん\n\n次のリンクを開いて、メールアドレスを確認してください（24時間有効）。\n${cfg.publicUrl}/verify-email?token=$t\n"
+                  s"${p.user.name} さん\n\n次のリンクを開いて、メールアドレスを確認してください（24時間有効）。\n${cfg.urlOf(pol.domain)}/verify-email?token=$t\n"
                 ) *>
                 NoContent()
           }
@@ -337,7 +337,7 @@ final class MeRoutes(dir: Directory,
       u.emailVerified,
       u.givenName,
       u.familyName,
-      dir.pictureUrl(u, p.branding.gravatar),
+      dir.pictureUrl(u, p),
       u.hasAvatar,
       dir.isAdmin(u, m),
       m.names,
@@ -360,8 +360,15 @@ final class MeRoutes(dir: Directory,
 
   /** ポータルに出すアプリ（使えるものだけ）. 本人が並べ替えた順. 並べ替えた後に増えたアプリは後ろに名前の順. */
   def portal(u: User, m: Membership): IO[List[AppBriefDto]] =
-    (apps.all, apps.allAccessGroups, apps.appOrder(u.id), apps.displayNames(m.ids), apps.displayLogos(m.ids)).mapN {
-      (as, access, order, names, logos) =>
+    (
+      apps.all,
+      apps.allAccessGroups,
+      apps.appOrder(u.id),
+      apps.displayNames(m.ids),
+      apps.displayLogos(m.ids),
+      login.appBrief
+    ).mapN {
+      (as, access, order, names, logos, appBrief) =>
         val pos = order.zipWithIndex.toMap
         as.filter(a =>
           a.enabled && a.showInPortal && (!a.restrictAccess || access.getOrElse(a.id, Nil).exists(m.ids.contains))
@@ -369,7 +376,7 @@ final class MeRoutes(dir: Directory,
           // グループごとの表示名の上書き
           .map { a =>
             // グループごとの表示名・ロゴの上書き
-            val b = login.appBrief(a.copy(name = names.getOrElse(a.id, a.name)))
+            val b = appBrief(a.copy(name = names.getOrElse(a.id, a.name)))
             logos.get(a.id).fold(b)(l => b.copy(iconUrl = Some(s"/brand-logos/$l")))
           }.filter(_.launchUrl.isDefined)
           .zipWithIndex.sortBy((a, i) => (pos.getOrElse(a.id, Int.MaxValue), i)).map(_._1)

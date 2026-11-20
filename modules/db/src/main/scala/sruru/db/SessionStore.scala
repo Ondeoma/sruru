@@ -42,19 +42,25 @@ final class SessionStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   // ------------------------------------------------------------------ ブラウザ
 
-  def createBrowser(tokenHash: Array[Byte], ip: String, ua: Option[String], expiresAt: Instant): IO[BrowserSession] = {
+  /** domain は、作ったときのドメイン（アクセスしたホスト名. 既定のホスト名なら空）. */
+  def createBrowser(tokenHash: Array[Byte],
+                    ip: String,
+                    ua: Option[String],
+                    expiresAt: Instant,
+                    domain: String = ""): IO[BrowserSession] = {
     val id = UUID.randomUUID()
     tx(
-      sql"""insert into browser_sessions (id, token_hash, ip, user_agent, expires_at) values ($id, $tokenHash, $ip, $ua, $expiresAt)""".update.run
+      sql"""insert into browser_sessions (id, token_hash, ip, user_agent, expires_at, domain)
+            values ($id, $tokenHash, $ip, $ua, $expiresAt, $domain)""".update.run
     )
       .as(BrowserSession(id, None, expiresAt))
   }
 
-  def findBrowser(tokenHash: Array[Byte], now: Instant): IO[Option[BrowserSession]] =
+  /** 作ったときと同じドメインでだけ見つかる（ほかのホスト名に Cookie を持ち込んでも使えない）. */
+  def findBrowser(tokenHash: Array[Byte], now: Instant, domain: String = ""): IO[Option[BrowserSession]] =
     tx(
-      sql"select id, active_user, expires_at from browser_sessions where token_hash = $tokenHash and expires_at > $now".query[
-        BrowserSession
-      ].option
+      sql"""select id, active_user, expires_at from browser_sessions
+            where token_hash = $tokenHash and expires_at > $now and domain = $domain""".query[BrowserSession].option
     )
 
   /** Cookie の値を新しくする（ログインの完了時. セッションの固定化を防ぐ）. */
@@ -164,9 +170,21 @@ final class SessionStore(xa: Transactor[IO]) extends TxStore(xa) {
           returning id, user_id""".query[(UUID, UUID)].to[List]
   )
 
-  /** 最後の操作が before より前のログイン (ID, ユーザー, 最後の操作)（ユーザーごとの無操作の時間で消すかを決める）. */
-  def idleLogins(before: Instant): IO[List[(UUID, UUID, Instant)]] =
-    tx(sql"select id, user_id, last_seen_at from logins where last_seen_at < $before".query[
-      (UUID, UUID, Instant)
+  /** 最後の操作が before より前のログイン (ID, ユーザー, 最後の操作, ドメイン)（ユーザー・ドメインごとの無操作の時間で消すかを決める）. */
+  def idleLogins(before: Instant): IO[List[(UUID, UUID, Instant, String)]] =
+    tx(sql"""select l.id, l.user_id, l.last_seen_at, b.domain from logins l
+             join browser_sessions b on b.id = l.browser_session_id where l.last_seen_at < $before""".query[
+      (UUID, UUID, Instant, String)
     ].to[List])
+
+  // ------------------------------------------------------------------ ドメイン
+
+  /** そのドメインのログイン (ID, ユーザー)（ドメインを消すときに終わらせる）. */
+  def loginsOfDomain(domain: String): IO[List[(UUID, UUID)]] =
+    tx(sql"""select l.id, l.user_id from logins l join browser_sessions b on b.id = l.browser_session_id
+             where b.domain = $domain""".query[(UUID, UUID)].to[List])
+
+  /** そのドメインのブラウザのセッションを消す（ログイン・ログインの途中の状態も一緒に消える）. */
+  def deleteBrowsersOfDomain(domain: String): IO[Int] =
+    tx(sql"delete from browser_sessions where domain = $domain".update.run)
 }
