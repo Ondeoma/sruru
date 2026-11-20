@@ -63,7 +63,7 @@ def parentName(props: Props, id: UUID): String = props.groups.find(_.id == id).m
     <section :class='if (props.withPolicy) "panel" else ""'>
       <h2 v-if="props.withPolicy">基本</h2>
       <div class="grid2">
-        <label class="field"><span>名前</span><input type="text" v-model="s.name" autofocus></label>
+        <label class="field"><span>名前</span><input type="text" v-model="s.name" v-focus></label>
         <div class="field"><span>親のグループ（複数可）</span>
           <div v-if="s.parents.v.nonEmpty" class="chips parents">
             <span v-for="p in s.parents.v" :key="p" class="chip">{{ parentName(props, p) }}<button type="button" class="ghost x" title="外す" @click="removeParent(s, p)">×</button></span>

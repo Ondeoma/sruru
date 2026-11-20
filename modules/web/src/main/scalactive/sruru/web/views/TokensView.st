@@ -20,12 +20,12 @@ def load(s: State): Unit = {
 
 def disconnect(s: State, g: OAuthGrantDto): Unit =
   Dialog.confirm(s"「${g.name}」との連携をやめますか？${g.name} からは sruru を使えなくなります（もう一度使うには、${g.name} の画面から連携し直します）。", "連携をやめる") {
-    Store.report(Api.delete(s"/api/me/oauth/${Api.enc(g.clientId)}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/me/oauth/${Api.enc(g.clientId)}"))(_ => load(s))
   }
 
 def remove(s: State, t: ApiTokenDto): Unit =
   Dialog.confirm(s"API トークン「${t.name}」を削除しますか？使っているプログラムは使えなくなります。", "削除") {
-    Store.report(Api.delete(s"/api/me/tokens/${t.id}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/me/tokens/${t.id}"))(_ => load(s))
   }
 </script>
 
@@ -71,6 +71,6 @@ def remove(s: State, t: ApiTokenDto): Unit =
         </table>
       </div>
     </section>
-    <p class="small muted">MCP のエンドポイント: <code>{{ Dom.origin }}/mcp</code>（Streamable HTTP）。REST API の一覧は <a href="/api/endpoints" target="_blank">/api/endpoints</a>。</p>
+    <p class="small muted">MCP のエンドポイント: <code>{{ Nav.origin }}/mcp</code>（Streamable HTTP）。REST API の一覧は <a href="/api/endpoints" target="_blank">/api/endpoints</a>。</p>
   </div>
 </template>

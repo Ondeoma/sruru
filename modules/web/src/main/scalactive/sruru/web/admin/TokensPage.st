@@ -10,11 +10,11 @@ def initState() = State()
 
 def mounted(s: State): Unit = { pageTitle("API トークン"); load(s) }
 
-def load(s: State): Unit = Store.report(Api.get[List[ApiTokenDto]]("/api/admin/tokens"))(s.tokens := _)
+def load(s: State): Unit = Toasts.report(Api.get[List[ApiTokenDto]]("/api/admin/tokens"))(s.tokens := _)
 
 def remove(s: State, t: ApiTokenDto): Unit =
   Dialog.confirm(s"API トークン「${t.name}」（${t.owner.map(_.name).getOrElse("")}）を削除しますか？", "削除") {
-    Store.report(Api.delete(s"/api/admin/tokens/${t.id}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/admin/tokens/${t.id}"))(_ => load(s))
   }
 
 def shown(s: State) = computed {
@@ -33,7 +33,7 @@ def shown(s: State) = computed {
         <thead><tr><th>持ち主</th><th>用途</th><th>トークン</th><th>スコープ</th><th class="hide-sp">有効期限</th><th>最後の使用</th><th></th></tr></thead>
         <tbody>
           <tr v-for="t in shown(s)" :key="t.id">
-            <td><template v-for="o in t.owner.toList"><RouterLink :to='"/admin/users/" + o.id' class="owner"><Avatar :user="Some(o)" :size="20" /> {{ o.name }}</RouterLink></template></td>
+            <td><template v-for="o in t.owner.toList"><RouterLink :to='"/admin/users/" + o.id' class="owner"><Avatar :user="Some(Users.person(o))" :size="20" /> {{ o.name }}</RouterLink></template></td>
             <td>{{ t.name }}</td>
             <td><code>{{ t.prefix }}…</code></td>
             <td class="small">{{ t.scopes.mkString(", ") }}</td>

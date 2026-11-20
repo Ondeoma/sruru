@@ -15,7 +15,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = {
   pageTitle("ポータル")
-  Store.report(Api.get[List[AppBriefDto]]("/api/me/apps")) { a => s.apps := a; s.loaded := true }
+  Toasts.report(Api.get[List[AppBriefDto]]("/api/me/apps")) { a => s.apps := a; s.loaded := true }
 }
 
 def shown(s: State) = computed {
@@ -23,7 +23,7 @@ def shown(s: State) = computed {
   s.apps.v.filter(a => q.isEmpty || a.name.toLowerCase.contains(q) || a.description.toLowerCase.contains(q))
 }
 
-def open(a: AppBriefDto): Unit = a.launchUrl.foreach(Dom.goto)
+def open(a: AppBriefDto): Unit = a.launchUrl.foreach(Nav.goto)
 def key(a: AppBriefDto, e: dom.Event): Unit = if (e.asInstanceOf[dom.KeyboardEvent].key == "Enter") open(a)
 def cls(s: State, a: AppBriefDto): String =
   "tile" + (if (a.launchUrl.isEmpty) " disabled" else "") + (if (s.dragging.v.contains(a.id)) " dragging" else "")
@@ -55,12 +55,12 @@ def end(s: State): Unit = if (s.dragging.v.isDefined) {
   s.dragging := None
   val now = s.apps.v.map(_.id)
   if (now != s.before.v)
-    Store.report(Api.putUnit("/api/me/apps/order", AppOrderReq(now).asJson))(_ => Store.toast("並び順を保存しました"))
+    Toasts.report(Api.putUnit("/api/me/apps/order", AppOrderReq(now).asJson))(_ => Toasts.show("並び順を保存しました"))
 }
 
 /** 名前の順に戻す. */
-def reset(s: State): Unit = Store.report(Api.delete("/api/me/apps/order")) { _ =>
-  Store.report(Api.get[List[AppBriefDto]]("/api/me/apps")) { a => s.apps := a; Store.toast("名前の順に戻しました") }
+def reset(s: State): Unit = Toasts.report(Api.delete("/api/me/apps/order")) { _ =>
+  Toasts.report(Api.get[List[AppBriefDto]]("/api/me/apps")) { a => s.apps := a; Toasts.show("名前の順に戻しました") }
 }
 def greeting = Store.me.mapC(_.map(m => s"${m.name} さん").getOrElse(""))
 </script>

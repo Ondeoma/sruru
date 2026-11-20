@@ -32,7 +32,7 @@ def mounted(s: State, props: Props): Unit = {
   Api.attributeDefs().foreach { ds => s.defs := ds; load(s, props) }
 }
 
-def load(s: State, props: Props): Unit = Store.report(Api.get[UserDetailDto](base(props))) { d =>
+def load(s: State, props: Props): Unit = Toasts.report(Api.get[UserDetailDto](base(props))) { d =>
   val u = d.user
   pageTitle(u.name)
   s.username := u.username; s.name := u.name; s.email := u.email.getOrElse(""); s.emailVerified := u.emailVerified
@@ -49,7 +49,7 @@ def save(s: State, props: Props): Unit = s.d.v.foreach { d =>
   val req = UserReq(s.username.v.trim, s.name.v.trim, Fmt.opt(s.email.v), s.emailVerified.v, Fmt.opt(s.givenN.v), Fmt.opt(s.family.v),
     s.isAdmin.v, s.isService.v, s.disabled.v, s.mustChange.v, Attrs.build(d.user.attributes, s.attrs.v), None,
     Some(s.groupIds.v.map(UUID.fromString)), Fmt.opt(s.locale.v), Fmt.opt(s.zone.v), Fmt.opt(s.phone.v))
-  Store.inline(Api.put[UserDto](base(props), Api.json(req)), s.error, s.busy) { _ => Store.toast("保存しました"); load(s, props) }
+  Store.inline(Api.put[UserDto](base(props), Api.json(req)), s.error, s.busy) { _ => Toasts.show("保存しました"); load(s, props) }
 }
 
 // ---------------------------------------------------------------- 操作
@@ -62,7 +62,7 @@ def setPassword(s: State, props: Props): Unit = {
       case Some(p) if s.pwMode.v == "generate" => s.pwResult := Some(p)
       case _ =>
         s.pwOpen := false
-        Store.toast(if (s.pwMode.v == "mail") "再設定のメールを送りました" else "パスワードを設定しました")
+        Toasts.show(if (s.pwMode.v == "mail") "再設定のメールを送りました" else "パスワードを設定しました")
     }
     reload(s, props)
   }
@@ -71,7 +71,7 @@ def setPassword(s: State, props: Props): Unit = {
 def openPw(s: State): Unit = { s.pwMode := "generate"; s.pw := ""; s.pwMust := true; s.pwResult := None; s.pwError := ""; s.pwOpen := true }
 
 def act(s: State, props: Props, path: String, msg: String): Unit =
-  Store.report(Api.postUnit(base(props) + path)) { _ => Store.toast(msg); reload(s, props) }
+  Toasts.report(Api.postUnit(base(props) + path)) { _ => Toasts.show(msg); reload(s, props) }
 
 def unlock(s: State, props: Props): Unit = act(s, props, "/unlock", "ロックを解除しました")
 
@@ -86,40 +86,40 @@ def forceLogout(s: State, props: Props): Unit =
   }
 
 def remove(s: State, props: Props): Unit = s.d.v.foreach { d =>
-  Dialog.typeToConfirm(s"ユーザー「${d.user.name}」を削除します。元に戻せません。", d.user.username, "削除する") {
-    Store.report(Api.delete(base(props))) { _ => Store.toast("削除しました"); Router.go("/admin/users") }
+  Dialogs.typeToConfirm(s"ユーザー「${d.user.name}」を削除します。元に戻せません。", d.user.username, "削除する") {
+    Toasts.report(Api.delete(base(props))) { _ => Toasts.show("削除しました"); Router.go("/admin/users") }
   }
 }
 
-def upload(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { f =>
+def upload(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { f =>
   Img.upload(base(props) + "/avatar", f).onComplete {
-    case Success(_) => Store.toast("アイコンを登録しました"); reload(s, props)
-    case Failure(x) => Store.error(x)
+    case Success(_) => Toasts.show("アイコンを登録しました"); reload(s, props)
+    case Failure(x) => Toasts.error(x)
   }
 }
 
 def removeAvatar(s: State, props: Props): Unit =
-  Store.report(Api.delete(base(props) + "/avatar")) { _ => Store.toast("アイコンを外しました"); reload(s, props) }
+  Toasts.report(Api.delete(base(props) + "/avatar")) { _ => Toasts.show("アイコンを外しました"); reload(s, props) }
 
 def endSession(s: State, props: Props, x: LoginSessionDto): Unit =
-  Store.report(Api.delete(base(props) + s"/sessions/${x.id}"))(_ => reload(s, props))
+  Toasts.report(Api.delete(base(props) + s"/sessions/${x.id}"))(_ => reload(s, props))
 
 def removeToken(s: State, props: Props, t: ApiTokenDto): Unit =
   Dialog.confirm(s"API トークン「${t.name}」を削除しますか？", "削除") {
-    Store.report(Api.delete(s"/api/admin/tokens/${t.id}"))(_ => reload(s, props))
+    Toasts.report(Api.delete(s"/api/admin/tokens/${t.id}"))(_ => reload(s, props))
   }
 
 def addCert(s: State, props: Props): Unit =
-  Store.report(Api.post[UserCertDto](base(props) + "/certs", CertReq(s.pem.v.trim).asJson)) { _ =>
-    s.pem := ""; s.addingCert := false; Store.toast("証明書を登録しました"); reload(s, props)
+  Toasts.report(Api.post[UserCertDto](base(props) + "/certs", CertReq(s.pem.v.trim).asJson)) { _ =>
+    s.pem := ""; s.addingCert := false; Toasts.show("証明書を登録しました"); reload(s, props)
   }
 
 def removeCert(s: State, props: Props, c: UserCertDto): Unit = Dialog.confirm(s"証明書「${c.subject}」を外しますか？", "外す") {
-  Store.report(Api.delete(base(props) + s"/certs/${c.id}"))(_ => reload(s, props))
+  Toasts.report(Api.delete(base(props) + s"/certs/${c.id}"))(_ => reload(s, props))
 }
 
 def revokeConsent(s: State, props: Props, c: ConsentDto): Unit = Dialog.confirm(s"「${c.app.name}」への許可を取り消しますか？（発行済みのトークンも失効します）", "取り消す") {
-  Store.report(Api.delete(s"${base(props)}/consents/${c.app.id}"))(_ => reload(s, props))
+  Toasts.report(Api.delete(s"${base(props)}/consents/${c.app.id}"))(_ => reload(s, props))
 }
 
 def detail(s: State) = s.d.mapC(_.toList)
@@ -136,7 +136,7 @@ def isMe(props: Props): Boolean = Store.myId.exists(_.toString == props.id)
     <p class="small"><RouterLink to="/admin/users">← ユーザーの一覧</RouterLink></p>
     <template v-for="d in detail(s)">
       <div class="head">
-        <Avatar :user="Some(Users.brief(d.user))" :size="64" />
+        <Avatar :user="Some(Users.person(d.user))" :size="64" />
         <div class="grow">
           <h1>{{ d.user.name }}</h1>
           <div class="muted small mono">{{ d.user.username }}</div>

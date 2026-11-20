@@ -3,25 +3,17 @@ import io.circe.Json
 import sruru.shared.*
 import sruru.web.*
 
-import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
-import scala.scalajs.js
-import scala.util.{Failure, Success}
-
 // ロゴを選ぶ（画像を上げて ID を bind に入れる. 保存はフォームの保存ボタンで）. 横長の画像もそのまま使う.
 // uploadUrl: 画像を上げる先（管理者は /api/admin/logos、ポリシーを任された人は /api/me/policy-groups/{id}/logos）.
 case class Props(bind: RV[Option[String]], emptyLabel: String = "既定のロゴ", uploadUrl: String = "/api/admin/logos")
 
-case class State(busy: RV[Boolean] = RV(false))
+case class State(up: ActionState = useAction())
 
 def initState() = State()
 
-def pick(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { f =>
-  s.busy := true
+def pick(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { f =>
   val ct = Option(f.`type`).filter(_.nonEmpty).getOrElse("image/png")
-  Api.postRaw[Json](props.uploadUrl, f.asInstanceOf[js.Any], ct).onComplete {
-    case Success(j) => s.busy := false; props.bind := j.hcursor.get[String]("id").toOption
-    case Failure(x) => s.busy := false; Store.error(x)
-  }
+  Toasts.report(s.up.run(Api.postRaw[Json](props.uploadUrl, f, Some(ct))))(j => props.bind := j.hcursor.get[String]("id").toOption)
 }
 
 def url(props: Props) = props.bind.mapC(Branding.logoUrl)
@@ -32,7 +24,7 @@ def url(props: Props) = props.bind.mapC(Branding.logoUrl)
     <div class="preview"><img :src="url(props).v" alt="ロゴ"></div>
     <div class="col">
       <div class="row">
-        <label class="btn small">{{ if (s.busy.v) "送っています…" else "画像を選ぶ" }}<input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" @change="pick(s, props, event)"></label>
+        <label class="btn small">{{ if (s.up.busy.v) "送っています…" else "画像を選ぶ" }}<input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" @change="pick(s, props, event)"></label>
         <button v-if="props.bind.v.isDefined" type="button" class="ghost small" @click="props.bind := None">外す（{{ props.emptyLabel }}）</button>
       </div>
       <span class="hint">PNG・JPEG・WebP・GIF・SVG、512KB まで。保存すると反映されます。</span>

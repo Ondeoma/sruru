@@ -17,7 +17,7 @@ def pick(s: State, id: UUID): Unit = {
 }
 
 def run(s: State): Unit = s.user.v.foreach { id =>
-  Store.report(Api.post[Json]("/api/admin/expr/test", Json.obj("expression" -> s.expr.v.asJson, "userId" -> id.asJson))) { j =>
+  Toasts.report(Api.post[Json]("/api/admin/expr/test", Json.obj("expression" -> s.expr.v.asJson, "userId" -> id.asJson))) { j =>
     val c = j.hcursor
     s.result := c.get[String]("error").map("エラー: " + _).getOrElse(c.downField("value").focus.map(_.spaces2).getOrElse(j.spaces2))
   }
@@ -42,7 +42,7 @@ def run(s: State): Unit = s.user.v.foreach { id =>
       <p class="small">試す:</p>
       <div class="row">
         <input type="text" v-model="s.expr" class="mono grow">
-        <div class="pick"><UserPicker :onPick="id => pick(s, id)" placeholder="ユーザーを選んで試す…" :small="true" /></div>
+        <div class="pick"><UserPicker :combo="true" :search="UserSearch.search" :hint="UserSearch.hint" :onPick="p => pick(s, UserSearch.id(p))" placeholder="ユーザーを選んで試す…" :small="true" /></div>
         <button type="button" class="small" :disabled="s.user.v.isEmpty" @click="run(s)">試す</button>
       </div>
       <pre v-if="s.result.v.nonEmpty" class="json res">{{ s.result }}</pre>

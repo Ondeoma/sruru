@@ -32,10 +32,10 @@ def mounted(s: State): Unit = {
 }
 
 def verify(s: State): Unit =
-  Store.inline(Api.post[RedirectDto]("/api/device/verify", DeviceVerifyReq(s.code.v).asJson), s.error, s.busy)(x => Dom.goto(x.redirect))
+  Store.inline(Api.post[RedirectDto]("/api/device/verify", DeviceVerifyReq(s.code.v).asJson), s.error, s.busy)(x => Nav.goto(x.redirect))
 
 def answer(s: State, approve: Boolean): Unit = s.req.v.foreach { r =>
-  Store.inline(Api.post[RedirectDto]("/api/device/decide", ConsentReq(r.id, approve).asJson), s.error, s.busy)(x => Dom.goto(x.redirect))
+  Store.inline(Api.post[RedirectDto]("/api/device/decide", ConsentReq(r.id, approve).asJson), s.error, s.busy)(x => Nav.goto(x.redirect))
 }
 
 def items(s: State) = s.req.mapC(_.toList)
@@ -50,7 +50,7 @@ def who(s: State) = s.me.mapC(_.toList)
       <p class="small">端末やアプリの画面に表示されているコードを入力してください。</p>
       <form @submit.prevent="verify(s)">
         <label class="field"><span>コード</span>
-          <input type="text" v-model="s.code" class="code-input" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" autofocus></label>
+          <input type="text" v-model="s.code" class="code-input" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" v-focus></label>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>
         <button type="submit" class="primary block" :disabled="s.busy">次へ</button>
       </form>

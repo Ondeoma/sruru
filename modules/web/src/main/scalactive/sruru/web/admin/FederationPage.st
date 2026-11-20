@@ -28,7 +28,7 @@ def mounted(s: State): Unit = {
   Api.groups().foreach(s.groups := _)
 }
 
-def load(s: State): Unit = Store.report(Api.get[List[FederationDto]]("/api/admin/federation"))(s.list := _)
+def load(s: State): Unit = Toasts.report(Api.get[List[FederationDto]]("/api/admin/federation"))(s.list := _)
 
 private val EntraIssuer = """https://login\.microsoftonline\.com/([^/]+)/v2\.0""".r
 
@@ -89,7 +89,7 @@ def save(s: State): Unit = {
     case None    => Api.post[FederationDto]("/api/admin/federation", Api.json(req))
   }
   Store.inline(f, s.error, s.busy) { x =>
-    Store.toast("保存しました")
+    Toasts.show("保存しました")
     load(s)
     edit(s, Some(x))
   }
@@ -97,14 +97,14 @@ def save(s: State): Unit = {
 
 def remove(s: State, f: FederationDto): Unit =
   Dialog.confirm(s"外部の IdP「${f.name}」を削除しますか？この IdP でのログインはできなくなります。", "削除") {
-    Store.report(Api.delete(s"/api/admin/federation/${f.id}")) { _ => s.editing := None; load(s) }
+    Toasts.report(Api.delete(s"/api/admin/federation/${f.id}")) { _ => s.editing := None; load(s) }
   }
 
 def sync(s: State, f: FederationDto): Unit = {
   s.syncing := Some(f.id)
   Api.post[SyncResultDto](s"/api/admin/federation/${f.id}/sync").onComplete { r =>
     s.syncing := None
-    r.fold(Store.error, x => Store.toast(x.message))
+    r.fold(Toasts.error, x => Toasts.show(x.message))
     load(s)
   }
 }

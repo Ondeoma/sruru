@@ -27,7 +27,7 @@ def load(s: State): Unit = {
   s.loading := true
   val url = "/api/admin/users" + Api.query("q" -> Some(s.q.v.trim), "status" -> Some(s.status.v), "groupId" -> Some(s.groupId.v),
     "limit" -> Some(limit.toString), "offset" -> Some(s.offset.v.toString))
-  Store.report(Api.get[UserListDto](url)) { r => s.users := r.users; s.total := r.total; s.loading := false }
+  Toasts.report(Api.get[UserListDto](url)) { r => s.users := r.users; s.total := r.total; s.loading := false }
 }
 
 def search(s: State): Unit = { s.offset := 0; load(s) }
@@ -51,7 +51,7 @@ def create(s: State): Unit = {
   }
   Store.inline(f, s.error, s.busy) { (u, gen) =>
     s.creating := false
-    Store.toast(s"ユーザー「${u.name}」を作りました")
+    Toasts.show(s"ユーザー「${u.name}」を作りました")
     gen match {
       case Some(p) => s.generated := Some((u, p))
       case None    => Router.go(s"/admin/users/${u.id}")
@@ -86,7 +86,7 @@ def groupOpts(s: State) = s.groups.mapC(gs => GroupTree.flatten(gs).map((g, _) =
         <thead><tr><th></th><th>ユーザー名</th><th>名前</th><th class="hide-sp">メールアドレス</th><th class="hide-sp">グループ</th><th>状態</th><th class="hide-sp">最後のログイン</th></tr></thead>
         <tbody>
           <tr v-for="u in s.users" :key="u.id" class="clickable" @click="open(u)">
-            <td><Avatar :user="Some(Users.brief(u))" :size="26" /></td>
+            <td><Avatar :user="Some(Users.person(u))" :size="26" /></td>
             <td class="mono small">{{ u.username }}</td>
             <td>{{ u.name }}</td>
             <td class="small hide-sp">{{ u.email.getOrElse("") }}</td>
@@ -106,7 +106,7 @@ def groupOpts(s: State) = s.groups.mapC(gs => GroupTree.flatten(gs).map((g, _) =
       <form @submit.prevent="create(s)">
         <h2>ユーザーを作る</h2>
         <div class="grid2">
-          <label class="field"><span>ユーザー名</span><input type="text" v-model="s.username" autocapitalize="none" autofocus></label>
+          <label class="field"><span>ユーザー名</span><input type="text" v-model="s.username" autocapitalize="none" v-focus></label>
           <label class="field"><span>名前</span><input type="text" v-model="s.name" placeholder="山田 太郎"></label>
         </div>
         <label class="field"><span>メールアドレス</span><input type="email" v-model="s.email"></label>

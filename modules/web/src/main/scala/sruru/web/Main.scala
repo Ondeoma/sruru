@@ -15,6 +15,8 @@ object Main {
     ScalactiveConfig.titleTemplate = "%s | sruru"
     ScalactiveConfig.defaultTitle = Some("sruru")
     Theme.apply()
+    // お知らせは 5 秒（エラーは 9 秒）で消す
+    Toasts.duration = 5000
     // 共通部品（PWA の購読など）の更新の要求にも CSRF 対策のヘッダーを付ける
     Fetch.extraHeaders = Map("X-Sruru" -> "1")
     // skorimako のブラウザの観測（IdP なので、ログイン・同意などの画面では読み込まず、ログインした人が決まってから読み込む）と、

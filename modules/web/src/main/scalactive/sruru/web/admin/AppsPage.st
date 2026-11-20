@@ -10,7 +10,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = {
   pageTitle("アプリケーション")
-  Store.report(Api.get[List[AppDto]]("/api/admin/apps"))(s.apps := _)
+  Toasts.report(Api.get[List[AppDto]]("/api/admin/apps"))(s.apps := _)
 }
 
 def shown(s: State) = computed {

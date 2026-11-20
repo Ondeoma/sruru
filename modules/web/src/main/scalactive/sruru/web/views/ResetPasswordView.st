@@ -31,7 +31,7 @@ def rules = Store.config.mapC(_.map(_.passwordRules).getOrElse(Nil))
     <template v-else>
       <p v-if="token.isEmpty" class="error small">リンクが正しくありません。メールのリンクをもう一度開いてください。</p>
       <form @submit.prevent="save(s)">
-        <label class="field"><span>新しいパスワード</span><input type="password" v-model="s.next" autocomplete="new-password" autofocus></label>
+        <label class="field"><span>新しいパスワード</span><input type="password" v-model="s.next" autocomplete="new-password" v-focus></label>
         <label class="field"><span>新しいパスワード（確認）</span><input type="password" v-model="s.next2" autocomplete="new-password"></label>
         <ul v-if="rules.mapC(_.nonEmpty)" class="rules small muted"><li v-for="r in rules">{{ r }}</li></ul>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>

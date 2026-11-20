@@ -21,7 +21,7 @@ def params(s: State): String = Api.query("q" -> Some(s.q.v.trim), "action" -> So
 def load(s: State): Unit = {
   val p = params(s)
   val url = "/api/admin/audit" + p + (if (p.isEmpty) "?" else "&") + s"limit=$limit&offset=${s.offset.v}"
-  Store.report(Api.get[AuditListDto](url)) { r => s.items := r.items; s.total := r.total }
+  Toasts.report(Api.get[AuditListDto](url)) { r => s.items := r.items; s.total := r.total }
 }
 
 def search(s: State): Unit = { s.offset := 0; load(s) }
@@ -31,7 +31,7 @@ def csvUrl(s: State) = computed { "/api/admin/audit.csv" + params(s) }
 
 def verify(s: State): Unit = {
   s.verifying := true
-  Store.report(Api.post[AuditVerifyDto]("/api/admin/audit/verify")) { r => s.verifying := false; s.verify := Some(r) }
+  Toasts.report(Api.post[AuditVerifyDto]("/api/admin/audit/verify")) { r => s.verifying := false; s.verify := Some(r) }
 }
 
 def detailList(s: State) = s.detail.mapC(_.toList)

@@ -9,16 +9,16 @@ def initState() = State()
 
 def mounted(s: State): Unit = { pageTitle("署名鍵"); load(s) }
 
-def load(s: State): Unit = Store.report(Api.get[List[KeyDto]]("/api/admin/keys"))(s.keys := _)
+def load(s: State): Unit = Toasts.report(Api.get[List[KeyDto]]("/api/admin/keys"))(s.keys := _)
 
 def rotate(s: State, alg: String): Unit =
   Dialog.confirm(s"$alg の署名鍵を新しくしますか？今の鍵は、発行済みのトークンを確かめるために公開したまま残ります。", "新しくする", danger = false) {
-    Store.report(Api.post[KeyDto](s"/api/admin/keys/rotate?alg=$alg")) { _ => Store.toast("署名鍵を新しくしました"); load(s) }
+    Toasts.report(Api.post[KeyDto](s"/api/admin/keys/rotate?alg=$alg")) { _ => Toasts.show("署名鍵を新しくしました"); load(s) }
   }
 
 def retire(s: State, k: KeyDto): Unit =
   Dialog.confirm(s"鍵 ${k.kid} を退役させますか？この鍵で署名したトークンは確かめられなくなります。", "退役させる") {
-    Store.report(Api.delete(s"/api/admin/keys/${Api.enc(k.kid)}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/admin/keys/${Api.enc(k.kid)}"))(_ => load(s))
   }
 
 def sorted(s: State) = s.keys.mapC(_.sortBy(k => (k.retiredAt.isDefined, !k.active, -k.createdAt.toEpochMilli)))

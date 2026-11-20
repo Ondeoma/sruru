@@ -32,58 +32,58 @@ def changePassword(s: State): Unit =
   if (s.next.v != s.next2.v) s.pwError := "確認のパスワードが一致しません"
   else Store.inline(Api.postUnit("/api/me/password", PasswordChangeReq(s.current.v, s.next.v).asJson), s.pwError, s.pwBusy) { _ =>
     s.current := ""; s.next := ""; s.next2 := ""
-    Store.toast("パスワードを変更しました")
+    Toasts.show("パスワードを変更しました")
     Store.reloadMe()
   }
 
 // ---------------------------------------------------------------- 2段階認証
 
-def startTotp(s: State): Unit = Store.report(Api.post[TotpSetupDto]("/api/me/totp")) { t => s.totp := Some(t); s.totpCode := ""; s.totpError := "" }
+def startTotp(s: State): Unit = Toasts.report(Api.post[TotpSetupDto]("/api/me/totp")) { t => s.totp := Some(t); s.totpCode := ""; s.totpError := "" }
 
 def verifyTotp(s: State): Unit = s.totp.v.foreach { t =>
   Store.inline(Api.post[RecoveryCodesDto]("/api/me/totp/verify", TotpVerifyReq(t.id, s.totpCode.v.replace(" ", "").trim, s.totpName.v.trim).asJson),
     s.totpError) { r =>
     s.totp := None
     s.codes := r.codes
-    Store.toast("認証アプリを登録しました")
+    Toasts.show("認証アプリを登録しました")
     Store.reloadMe()
   }
 }
 
 def removeTotp(t: TotpDto): Unit = Dialog.confirm(s"認証アプリ「${t.name}」を外しますか？", "外す") {
-  Store.report(Api.delete(s"/api/me/totp/${t.id}")) { _ => Store.toast("外しました"); Store.reloadMe() }
+  Toasts.report(Api.delete(s"/api/me/totp/${t.id}")) { _ => Toasts.show("外しました"); Store.reloadMe() }
 }
 
 def regenerate(s: State): Unit =
   Dialog.confirm("回復コードを作り直しますか？今までのコードは使えなくなります。", "作り直す") {
-    Store.report(Api.post[RecoveryCodesDto]("/api/me/recovery-codes")) { r => s.codes := r.codes; Store.reloadMe() }
+    Toasts.report(Api.post[RecoveryCodesDto]("/api/me/recovery-codes")) { r => s.codes := r.codes; Store.reloadMe() }
   }
 
 // ---------------------------------------------------------------- 証明書
 
-def addCert(s: State): Unit = Store.report(Api.post[UserCertDto]("/api/me/certs", CertReq(s.pem.v.trim).asJson)) { _ =>
-  s.pem := ""; s.addingCert := false; Store.toast("証明書を登録しました"); loadCerts(s)
+def addCert(s: State): Unit = Toasts.report(Api.post[UserCertDto]("/api/me/certs", CertReq(s.pem.v.trim).asJson)) { _ =>
+  s.pem := ""; s.addingCert := false; Toasts.show("証明書を登録しました"); loadCerts(s)
 }
 
 def removeCert(s: State, c: UserCertDto): Unit = Dialog.confirm(s"証明書「${c.subject}」を外しますか？", "外す") {
-  Store.report(Api.delete(s"/api/me/certs/${c.id}"))(_ => loadCerts(s))
+  Toasts.report(Api.delete(s"/api/me/certs/${c.id}"))(_ => loadCerts(s))
 }
 
-def loadPemFile(s: State, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { f =>
+def loadPemFile(s: State, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { f =>
   f.asInstanceOf[scala.scalajs.js.Dynamic].text().asInstanceOf[scala.scalajs.js.Promise[String]].toFuture.foreach(s.pem := _)
 }
 
 // ---------------------------------------------------------------- 端末・許可
 
-def endSession(s: State, x: LoginSessionDto): Unit = Store.report(Api.delete(s"/api/me/sessions/${x.id}"))(_ => loadSessions(s))
+def endSession(s: State, x: LoginSessionDto): Unit = Toasts.report(Api.delete(s"/api/me/sessions/${x.id}"))(_ => loadSessions(s))
 
 def endOthers(s: State): Unit = Dialog.confirm("この端末以外のログインをすべて終わらせますか？", "終わらせる") {
-  Store.report(Api.delete("/api/me/sessions"))(_ => loadSessions(s))
+  Toasts.report(Api.delete("/api/me/sessions"))(_ => loadSessions(s))
 }
 
 def revoke(s: State, c: ConsentDto): Unit =
   Dialog.confirm(s"「${c.app.name}」への許可を取り消しますか？このアプリでは、もう一度ログインと許可が必要になります。", "取り消す") {
-    Store.report(Api.delete(s"/api/me/consents/${c.app.id}")) { _ => s.consents := s.consents.v.filterNot(_.app.id == c.app.id) }
+    Toasts.report(Api.delete(s"/api/me/consents/${c.app.id}")) { _ => s.consents := s.consents.v.filterNot(_.app.id == c.app.id) }
   }
 
 def me = Store.me.mapC(_.toList)

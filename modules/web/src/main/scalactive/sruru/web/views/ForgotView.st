@@ -26,7 +26,7 @@ def mail = Store.config.mapC(_.forall(_.mailEnabled))
       <p v-if="mail.mapC(!_)" class="notice warn small">メールを送る設定がないため、再設定のメールは届きません。管理者に連絡してください。</p>
       <p class="small">ユーザー名かメールアドレスを入力してください。再設定のためのリンクをメールで送ります。</p>
       <form @submit.prevent="send(s)">
-        <label class="field"><span>ユーザー名またはメールアドレス</span><input type="text" v-model="s.username" autocapitalize="none" autofocus></label>
+        <label class="field"><span>ユーザー名またはメールアドレス</span><input type="text" v-model="s.username" autocapitalize="none" v-focus></label>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>
         <button type="submit" class="primary block" :disabled="s.busy">送る</button>
       </form>

@@ -1,12 +1,17 @@
 <script lang="scala">
 import sruru.web.*
+import org.scalajs.dom
+
+import scala.scalajs.js
 
 // 回復コードの表示（コピー・ファイルに保存）
 case class Props(codes: List[String])
 
 def text(props: Props): String = props.codes.mkString("\n") + "\n"
-def save(props: Props): Unit = Dom.download("sruru-recovery-codes.txt",
-  "回復コード（それぞれ1回だけ使えます）\n" + text(props))
+def save(props: Props): Unit = {
+  val body = "回復コード（それぞれ1回だけ使えます）\n" + text(props)
+  Dom.download(new dom.Blob(js.Array(body), new dom.BlobPropertyBag { `type` = "text/plain;charset=utf-8" }), "sruru-recovery-codes.txt")
+}
 </script>
 
 <template>

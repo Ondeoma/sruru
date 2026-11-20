@@ -36,7 +36,7 @@ def initState() = State()
 def mounted(s: State): Unit = {
   pageTitle("ポリシー")
   Api.groups().foreach(s.groups := _)
-  Store.report(Api.get[PoliciesDto]("/api/admin/policies"))(fill(s, _))
+  Toasts.report(Api.get[PoliciesDto]("/api/admin/policies"))(fill(s, _))
 }
 
 def fill(s: State, p: PoliciesDto): Unit = {
@@ -71,7 +71,7 @@ def build(s: State): PoliciesDto = PoliciesDto(
   AuditPolicy(s.retention.v))
 
 def save(s: State): Unit = Store.inline(Api.putUnit("/api/admin/policies", Api.json(build(s))), s.error, s.busy) { _ =>
-  Store.toast("ポリシーを保存しました")
+  Toasts.show("ポリシーを保存しました")
   Api.clientConfig().foreach(c => Store.config := Some(c))
 }
 

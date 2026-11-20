@@ -23,9 +23,9 @@ def mounted(s: State): Unit = {
 }
 
 def pick(s: State, a: AccountDto): Unit =
-  Store.inline(Api.post[RedirectDto](s"/api/auth-requests/${Api.enc(reqId)}/select", SwitchReq(a.userId).asJson), s.error, s.busy)(r => Dom.goto(r.redirect))
+  Store.inline(Api.post[RedirectDto](s"/api/auth-requests/${Api.enc(reqId)}/select", SwitchReq(a.userId).asJson), s.error, s.busy)(r => Nav.goto(r.redirect))
 
-def another(): Unit = Dom.goto("/login?req=" + Api.enc(reqId) + "&add=1")
+def another(): Unit = Nav.goto("/login?req=" + Api.enc(reqId) + "&add=1")
 
 def app(s: State) = s.req.mapC(_.map(_.app).toList)
 </script>
@@ -41,7 +41,7 @@ def app(s: State) = s.req.mapC(_.map(_.app).toList)
     <h1>アカウントの選択</h1>
     <div class="stack">
       <button v-for="a in s.accounts" :key="a.userId" class="acct" :disabled="s.busy" @click="pick(s, a)">
-        <Avatar :user="Some(Users.brief(a))" :size="34" />
+        <Avatar :user="Some(Users.person(a))" :size="34" />
         <span class="grow left"><span class="nm">{{ a.name }}</span><br><span class="muted small">{{ a.username }}</span></span>
         <span v-if="a.active" class="badge accent">使用中</span>
       </button>

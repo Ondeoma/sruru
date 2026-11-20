@@ -20,11 +20,11 @@ def url(props: Props): String = s"/api/admin/apps/${props.appId}/group-names"
 
 def mounted(s: State, props: Props): Unit = {
   Api.groups().foreach(gs => s.groups := gs.sortBy(_.name))
-  Store.report(Api.get[List[AppGroupNameDto]](url(props)))(s.items := _)
+  Toasts.report(Api.get[List[AppGroupNameDto]](url(props)))(s.items := _)
 }
 
 def save(s: State, props: Props, items: List[AppGroupNameDto]): Unit =
-  Store.report(Api.put[List[AppGroupNameDto]](url(props), AppGroupNamesReq(items).asJson)) { xs => s.items := xs; Store.toast("保存しました") }
+  Toasts.report(Api.put[List[AppGroupNameDto]](url(props), AppGroupNamesReq(items).asJson)) { xs => s.items := xs; Toasts.show("保存しました") }
 
 def add(s: State, props: Props): Unit =
   if (s.group.v.nonEmpty && (s.name.v.trim.nonEmpty || s.logo.v.isDefined)) {

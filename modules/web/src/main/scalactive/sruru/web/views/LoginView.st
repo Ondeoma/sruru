@@ -45,7 +45,7 @@ def mounted(s: State): Unit = {
 def set(s: State, f: FlowDto): Unit = {
   s.code := ""
   s.error := f.message.filter(_ => f.stage == "error").getOrElse("")
-  if (f.stage == "done") f.redirect.foreach(Dom.goto)
+  if (f.stage == "done") f.redirect.foreach(Nav.goto)
   else {
     if (f.stage == "mfa" && !f.mfaMethods.contains(s.method.v)) s.method := f.mfaMethods.headOption.getOrElse("totp")
     if (s.username.v.isEmpty) f.user.map(_.username).orElse(f.request.flatMap(_.loginHint)).foreach(s.username := _)
@@ -80,13 +80,13 @@ def changePassword(s: State): Unit =
   else call(s, "/api/login/change-password", FlowPasswordReq(id(s), s.next.v).asJson)
 
 /** 外部の IdP・証明書でのログイン（ブラウザごと移る. 戻ってきたら ?flow= で続ける）. */
-def federated(s: State, p: ProviderBriefDto): Unit = Dom.goto(s"/auth/fed/${p.slug}/start?flow=${id(s)}")
-def cert(s: State): Unit = Dom.goto(s"/auth/cert?flow=${id(s)}")
+def federated(s: State, p: ProviderBriefDto): Unit = Nav.goto(s"/auth/fed/${p.slug}/start?flow=${id(s)}")
+def cert(s: State): Unit = Nav.goto(s"/auth/cert?flow=${id(s)}")
 
 /** 最初からやり直す（flow を外す）. */
 def restart(): Unit = {
   val keep = List("req", "returnTo", "add", "stepup", "reauth").flatMap(k => Api.param(k).map(k -> _))
-  Dom.goto("/login" + Api.query(keep.map((k, v) => k -> Some(v))*))
+  Nav.goto("/login" + Api.query(keep.map((k, v) => k -> Some(v))*))
 }
 
 def stage(s: State) = s.flow.mapC(_.map(_.stage).getOrElse(""))
@@ -121,7 +121,7 @@ def codeLabel(s: State) = s.method.mapC {
     </template>
     <template v-for="u in flowUser(s)">
       <div v-if='stage(s).v != "identify"' class="user-chip">
-        <Avatar :user="Some(UserBrief(id(s), u.username, u.name, u.avatarUrl))" :size="28" />
+        <Avatar :user="Some(Users.person(UserBrief(id(s), u.username, u.name, u.avatarUrl)))" :size="28" />
         <div class="grow"><div>{{ u.name }}</div><div class="muted small">{{ u.username }}</div></div>
       </div>
     </template>
@@ -134,7 +134,7 @@ def codeLabel(s: State) = s.method.mapC {
       <template v-for="c in cfg"><p v-if="c.loginMessage.nonEmpty" class="notice small msg">{{ c.loginMessage }}</p></template>
       <p v-if="isReauth" class="notice small msg">大切な設定を変えるため、本人確認としてもう一度ログインしてください。</p>
       <form @submit.prevent="login(s)">
-        <label class="field"><span>ユーザー名またはメールアドレス</span><input type="text" v-model="s.username" autocomplete="username" autocapitalize="none" autofocus></label>
+        <label class="field"><span>ユーザー名またはメールアドレス</span><input type="text" v-model="s.username" autocomplete="username" autocapitalize="none" v-focus></label>
         <label class="field"><span>パスワード</span><input type="password" v-model="s.password" autocomplete="current-password"></label>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>
         <button type="submit" class="primary block" :disabled="s.busy">ログイン</button>
@@ -175,7 +175,7 @@ def codeLabel(s: State) = s.method.mapC {
       <p v-if='s.method.v == "email" && emailSent(s).v' class="small notice ok">{{ emailHint(s) }} にコードを送りました。</p>
       <form @submit.prevent="mfa(s)">
         <label class="field"><span>{{ codeLabel(s) }}</span>
-          <input type="text" v-model="s.code" :class='if (s.method.v == "recovery") "" else "otp"' inputmode="numeric" autocomplete="one-time-code" autofocus></label>
+          <input type="text" v-model="s.code" :class='if (s.method.v == "recovery") "" else "otp"' inputmode="numeric" autocomplete="one-time-code" v-focus></label>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>
         <button type="submit" class="primary block" :disabled="s.busy">確認</button>
       </form>
@@ -218,7 +218,7 @@ def codeLabel(s: State) = s.method.mapC {
       <h1>パスワードの変更</h1>
       <p class="small">続けるには新しいパスワードを設定してください。</p>
       <form @submit.prevent="changePassword(s)">
-        <label class="field"><span>新しいパスワード</span><input type="password" v-model="s.next" autocomplete="new-password" autofocus></label>
+        <label class="field"><span>新しいパスワード</span><input type="password" v-model="s.next" autocomplete="new-password" v-focus></label>
         <label class="field"><span>新しいパスワード（確認）</span><input type="password" v-model="s.next2" autocomplete="new-password"></label>
         <ul v-if="rules(s).mapC(_.nonEmpty)" class="rules small muted"><li v-for="r in rules(s)">{{ r }}</li></ul>
         <p v-if="s.error.v.nonEmpty" class="error small">{{ s.error }}</p>

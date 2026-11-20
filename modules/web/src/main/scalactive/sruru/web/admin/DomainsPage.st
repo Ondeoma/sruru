@@ -14,10 +14,10 @@ def initState() = State()
 def mounted(s: State): Unit = {
   pageTitle("ドメイン")
   load(s)
-  Store.report(Api.get[List[FederationDto]]("/api/admin/federation"))(s.providers := _)
+  Toasts.report(Api.get[List[FederationDto]]("/api/admin/federation"))(s.providers := _)
 }
 
-def load(s: State): Unit = Store.report(Api.get[DomainsDto]("/api/admin/domains"))(d => s.data := Some(d))
+def load(s: State): Unit = Toasts.report(Api.get[DomainsDto]("/api/admin/domains"))(d => s.data := Some(d))
 
 def edit(s: State, d: Option[DomainDto]): Unit = {
   s.form := Some(DomainEdit.from(d.fold("")(_.host), d.fold("")(_.note), d.fold(DomainPolicy())(_.policy)))
@@ -35,7 +35,7 @@ def save(s: State): Unit = s.form.v.foreach(_.build match {
       case None    => Api.post[DomainDto]("/api/admin/domains", Api.json(req))
     }
     Store.inline(f, s.error, s.busy) { x =>
-      Store.toast("保存しました")
+      Toasts.show("保存しました")
       load(s)
       edit(s, Some(x))
     }
@@ -43,7 +43,7 @@ def save(s: State): Unit = s.form.v.foreach(_.build match {
 
 def remove(s: State, d: DomainDto): Unit =
   Dialog.confirm(s"ドメイン「${d.host}」を削除しますか？このホスト名でのログインは終わり、以後は既定のホスト名として扱われます。", "削除") {
-    Store.report(Api.delete(s"/api/admin/domains/${d.id}")) { _ => close(s); load(s) }
+    Toasts.report(Api.delete(s"/api/admin/domains/${d.id}")) { _ => close(s); load(s) }
   }
 
 def rows(s: State) = s.data.mapC(_.toList.flatMap(_.domains))

@@ -41,7 +41,7 @@ def publicPath(href: String): Boolean = Pages.isPublic(new dom.URL(href).pathnam
 
 def isPublic = Router.href.mapC(publicPath)
 
-def loadMe(s: State): Unit = Store.report(Store.reloadMe()) { me =>
+def loadMe(s: State): Unit = Toasts.report(Store.reloadMe()) { me =>
   Observe.setUser(me.id.toString)
   Store.loadAccounts()
   s.ready := true
@@ -59,19 +59,19 @@ def mounted(s: State): Unit = {
 }
 
 def switchTo(a: AccountDto): Unit =
-  if (!a.active) Store.report(Api.postUnit("/api/accounts/switch", SwitchReq(a.userId).asJson))(_ => Dom.goto("/"))
+  if (!a.active) Toasts.report(Api.postUnit("/api/accounts/switch", SwitchReq(a.userId).asJson))(_ => Nav.goto("/"))
 
 def logout(): Unit = Store.myId.foreach { id =>
-  Store.report(Api.postUnit("/api/accounts/logout", AccountLogoutReq(Some(id)).asJson)) { _ =>
-    if (Store.accounts.v.exists(a => a.userId != id)) Dom.goto("/") else Dom.goto("/logged-out")
+  Toasts.report(Api.postUnit("/api/accounts/logout", AccountLogoutReq(Some(id)).asJson)) { _ =>
+    if (Store.accounts.v.exists(a => a.userId != id)) Nav.goto("/") else Nav.goto("/logged-out")
   }
 }
 
-def logoutAll(): Unit = Store.report(Api.postUnit("/api/accounts/logout", AccountLogoutReq(None).asJson))(_ => Dom.goto("/logged-out"))
+def logoutAll(): Unit = Toasts.report(Api.postUnit("/api/accounts/logout", AccountLogoutReq(None).asJson))(_ => Nav.goto("/logged-out"))
 
-def addAccount(): Unit = Dom.goto("/login?add=1&returnTo=" + Api.enc("/"))
+def addAccount(): Unit = Nav.goto("/login?add=1&returnTo=" + Api.enc("/"))
 
-def meBrief = Store.me.mapC(_.map(Users.brief))
+def meBrief = Store.me.mapC(_.map(Users.person))
 def userName = Store.me.mapC(_.map(_.name).getOrElse(""))
 def userId = Store.me.mapC(_.map(_.username).getOrElse(""))
 def showHeader(s: State) = computed { !isPublic.v && Store.me.v.isDefined }
@@ -102,7 +102,7 @@ def others = Store.accounts.mapC(_.filterNot(_.active))
         <div class="sep"></div>
         <div v-if="others.mapC(_.nonEmpty)" class="muted small hd">ほかのアカウントに切り替える</div>
         <a v-for="a in others" :key="a.userId" href="#" class="acct" @click.prevent="switchTo(a)">
-          <Avatar :user="Some(Users.brief(a))" :size="24" /><span class="grow">{{ a.name }}<span class="muted small"> {{ a.username }}</span></span>
+          <Avatar :user="Some(Users.person(a))" :size="24" /><span class="grow">{{ a.name }}<span class="muted small"> {{ a.username }}</span></span>
         </a>
         <a href="#" @click.prevent="addAccount()">＋ 別のアカウントを追加</a>
         <div class="sep"></div>
@@ -115,12 +115,7 @@ def others = Store.accounts.mapC(_.filterNot(_.active))
     <RouterComponent v-if="s.ready" :routes="routes" />
   </main>
   <DialogHost />
-  <div class="toasts">
-    <div v-for="t in Store.toasts" :key="t.id" :class='if (t.error) "toast error" else "toast"'>
-      <span class="grow">{{ t.text }}</span>
-      <button @click="Store.dismiss(t.id)">×</button>
-    </div>
-  </div>
+  <ToastHost />
 </template>
 
 <style scoped>

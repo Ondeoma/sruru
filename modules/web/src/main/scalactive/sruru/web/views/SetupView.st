@@ -17,7 +17,7 @@ def save(s: State): Unit =
   else Store.inline(Api.postUnit("/api/setup", SetupReq(s.token.v.trim, s.username.v.trim, s.name.v.trim, s.email.v.trim, s.password.v).asJson),
     s.error, s.busy) { _ =>
     Store.config := Store.config.v.map(_.copy(setupRequired = false))
-    Store.toast("管理者を作りました。ログインしてください")
+    Toasts.show("管理者を作りました。ログインしてください")
     Router.go("/login")
   }
 

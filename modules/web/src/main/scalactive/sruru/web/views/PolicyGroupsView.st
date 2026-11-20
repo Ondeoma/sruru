@@ -16,7 +16,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = {
   pageTitle("ポリシーの管理")
-  Store.report(Api.get[List[DelegatedGroupDto]]("/api/me/policy-groups")) { gs =>
+  Toasts.report(Api.get[List[DelegatedGroupDto]]("/api/me/policy-groups")) { gs =>
     s.items := gs.map(g => Edit(g, PolicyEdit.from(g.policy))); s.loaded := true
   }
 }
@@ -27,7 +27,7 @@ def save(x: Edit): Unit = x.e.build match {
     x.err := ""; x.busy := true
     Api.put[DelegatedGroupDto](s"/api/me/policy-groups/${x.g.id}", DelegatedPolicyReq(pol).asJson).onComplete { r =>
       x.busy := false
-      r.fold(e => x.err := e.getMessage, _ => Store.toast(s"「${x.g.name}」のポリシーを保存しました"))
+      r.fold(e => x.err := e.getMessage, _ => Toasts.show(s"「${x.g.name}」のポリシーを保存しました"))
     }
 }
 

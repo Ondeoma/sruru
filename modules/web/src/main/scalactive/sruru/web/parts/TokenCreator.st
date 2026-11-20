@@ -28,7 +28,7 @@ def scopeList(props: Props): List[String] =
   if (props.allowAdmin) TokenScopes.all else TokenScopes.all.filterNot(x => x == TokenScopes.Admin || x == TokenScopes.Scim)
 
 def mcpCommand(s: State) = s.created.mapC(k =>
-  s"claude mcp add --transport http sruru ${Dom.origin}/mcp --header \"Authorization: Bearer ${k.getOrElse("<トークン>")}\"")
+  s"claude mcp add --transport http sruru ${Nav.origin}/mcp --header \"Authorization: Bearer ${k.getOrElse("<トークン>")}\"")
 def token(s: State) = s.created.mapC(_.getOrElse(""))
 </script>
 

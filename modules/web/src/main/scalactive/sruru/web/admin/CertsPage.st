@@ -17,16 +17,16 @@ def mounted(s: State): Unit = {
   Api.get[PoliciesDto]("/api/admin/policies").foreach(p => s.policy := Some(p.cert))
 }
 
-def load(s: State): Unit = Store.report(Api.get[List[CertAuthorityDto]]("/api/admin/cert-authorities"))(s.cas := _)
+def load(s: State): Unit = Toasts.report(Api.get[List[CertAuthorityDto]]("/api/admin/cert-authorities"))(s.cas := _)
 
 def add(s: State): Unit =
   Store.inline(Api.post[CertAuthorityDto]("/api/admin/cert-authorities", Api.json(CertAuthorityReq(s.name.v.trim, s.pem.v.trim))), s.error, s.busy) { _ =>
-    s.adding := false; s.name := ""; s.pem := ""; Store.toast("認証局を追加しました"); load(s)
+    s.adding := false; s.name := ""; s.pem := ""; Toasts.show("認証局を追加しました"); load(s)
   }
 
 def remove(s: State, c: CertAuthorityDto): Unit =
   Dialog.confirm(s"認証局「${c.name}」を削除しますか？この認証局の証明書ではログインできなくなります。", "削除") {
-    Store.report(Api.delete(s"/api/admin/cert-authorities/${c.id}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/admin/cert-authorities/${c.id}"))(_ => load(s))
   }
 
 def pol(s: State) = s.policy.mapC(_.toList)

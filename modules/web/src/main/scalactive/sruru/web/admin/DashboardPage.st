@@ -12,7 +12,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = {
   pageTitle("概要")
-  Store.report(Api.get[DashboardDto]("/api/admin/dashboard"))(x => s.d := Some(x))
+  Toasts.report(Api.get[DashboardDto]("/api/admin/dashboard"))(x => s.d := Some(x))
   Api.idpInfo().foreach(x => s.info := Some(x))
 }
 

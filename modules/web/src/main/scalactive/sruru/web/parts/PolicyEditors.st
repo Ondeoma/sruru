@@ -18,11 +18,11 @@ def url(props: Props): String = s"/api/admin/groups/${props.groupId}/policy-edit
 
 def mounted(s: State, props: Props): Unit = {
   Api.groups().foreach(gs => s.groups := gs.sortBy(_.name))
-  Store.report(Api.get[PolicyEditorsDto](url(props)))(s.d := _)
+  Toasts.report(Api.get[PolicyEditorsDto](url(props)))(s.d := _)
 }
 
 def save(s: State, props: Props, users: List[UUID], groups: List[UUID]): Unit =
-  Store.report(Api.put[PolicyEditorsDto](url(props), PolicyEditorsReq(users.distinct, groups.distinct).asJson))(s.d := _)
+  Toasts.report(Api.put[PolicyEditorsDto](url(props), PolicyEditorsReq(users.distinct, groups.distinct).asJson))(s.d := _)
 
 def addUser(s: State, props: Props, id: UUID): Unit = save(s, props, s.d.v.users.map(_.id) :+ id, s.d.v.groups.map(_.id))
 
@@ -43,14 +43,14 @@ def candidates(s: State) = s.groups.mapC(identity)
     <h2>ポリシーを編集できる人</h2>
     <p class="small muted">ここに加えたユーザーと、加えたグループのメンバーは、個人設定の「ポリシーの管理」で、このグループのポリシーの上書きだけを編集できます（管理者の権限は付きません）。</p>
     <div class="chips">
-      <span v-for="u in users(s)" :key="u.id.toString" class="chip"><Avatar :user="Some(u)" :size="18" />{{ u.name }}
+      <span v-for="u in users(s)" :key="u.id.toString" class="chip"><Avatar :user="Some(Users.person(u))" :size="18" />{{ u.name }}
         <button type="button" class="ghost small" @click="removeUser(s, props, u)">×</button></span>
       <span v-for="g in editorGroups(s)" :key="g.id.toString" class="chip">グループ: {{ g.name }}
         <button type="button" class="ghost small" @click="removeGroup(s, props, g)">×</button></span>
     </div>
     <p v-if="s.d.v.users.isEmpty && s.d.v.groups.isEmpty" class="muted small">まだいません（管理者だけが編集できます）。</p>
     <div class="row add">
-      <div class="picker"><UserPicker :onPick="id => addUser(s, props, id)" placeholder="ユーザーを検索して加える…" /></div>
+      <div class="picker"><UserPicker :combo="true" :search="UserSearch.search" :hint="UserSearch.hint" :onPick="p => addUser(s, props, UserSearch.id(p))" placeholder="ユーザーを検索して加える…" /></div>
       <label class="field"><select v-model="s.pick"><option value="">（グループを選ぶ）</option><option v-for="g in candidates(s)" :value="g.id.toString">{{ g.name }}</option></select></label>
       <button type="button" class="small" @click="addGroup(s, props)">グループを加える</button>
     </div>

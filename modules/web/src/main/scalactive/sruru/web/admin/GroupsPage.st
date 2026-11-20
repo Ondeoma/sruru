@@ -11,7 +11,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = { pageTitle("グループ"); load(s) }
 
-def load(s: State): Unit = Store.report(Api.groups())(s.groups := _)
+def load(s: State): Unit = Toasts.report(Api.groups())(s.groups := _)
 
 def rows(s: State) = computed {
   val q = s.q.v.trim.toLowerCase
@@ -21,10 +21,10 @@ def rows(s: State) = computed {
 }
 
 /** 作ったら、そのグループの画面へ（メンバー・ポリシーの上書きはそこで設定する）. */
-def created(s: State, g: GroupDto): Unit = { s.creating := false; Store.toast("グループを作りました"); Router.go("/admin/groups/" + g.id) }
+def created(s: State, g: GroupDto): Unit = { s.creating := false; Toasts.show("グループを作りました"); Router.go("/admin/groups/" + g.id) }
 
 def remove(s: State, g: GroupDto): Unit = Dialog.confirm(s"グループ「${g.name}」を削除しますか？メンバーはグループから外れます。", "削除") {
-  Store.report(Api.delete(s"/api/admin/groups/${g.id}"))(_ => load(s))
+  Toasts.report(Api.delete(s"/api/admin/groups/${g.id}"))(_ => load(s))
 }
 
 </script>

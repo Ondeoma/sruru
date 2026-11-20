@@ -3,13 +3,11 @@ import sruru.shared.*
 import sruru.web.*
 import sruru.web.parts.*
 
-import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
-import scala.util.{Failure, Success}
 
 // 個人設定: プロフィール（名前・メールアドレス・電話番号・カスタム属性・アイコン）
 case class State(name: RV[String], givenN: RV[String], family: RV[String], email: RV[String], phone: RV[String], locale: RV[String],
                  zone: RV[String], attrs: RV[List[AttrField]], error: RV[String] = RV(""), busy: RV[Boolean] = RV(false),
-                 uploading: RV[Boolean] = RV(false))
+                 upload: ActionState = useAction())
 
 def initState() = {
   val m = Store.me.v
@@ -26,28 +24,21 @@ def readonlyAttrs(s: State) = s.attrs.mapC(_.filter(f => !f.d.userEditable && (f
 def save(s: State): Unit = Store.me.v.foreach { m =>
   val req = MeUpdateReq(s.name.v.trim, Fmt.opt(s.givenN.v), Fmt.opt(s.family.v), Fmt.opt(s.email.v), Attrs.build(m.attributes, editable(s).v),
     Fmt.opt(s.locale.v), Fmt.opt(s.zone.v), Fmt.opt(s.phone.v))
-  Store.inline(Api.put[MeDto]("/api/me", Api.json(req)), s.error, s.busy) { x => Store.me := Some(x); Store.toast("保存しました") }
+  Store.inline(Api.put[MeDto]("/api/me", Api.json(req)), s.error, s.busy) { x => Store.me := Some(x); Toasts.show("保存しました") }
 }
 
-def sendVerify(): Unit = Store.report(Api.postUnit("/api/me/email/verify"))(_ => Store.toast("確認のメールを送りました"))
+def sendVerify(): Unit = Toasts.report(Api.postUnit("/api/me/email/verify"))(_ => Toasts.show("確認のメールを送りました"))
 
-def upload(s: State, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { file =>
-  s.uploading := true
-  Img.upload("/api/me/avatar", file).onComplete { r =>
-    s.uploading := false
-    r match {
-      case Success(_) => Store.toast("アイコンを登録しました"); Store.reloadMe()
-      case Failure(x) => Store.error(x)
-    }
-  }
+def upload(s: State, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { file =>
+  Toasts.report(s.upload.run(Img.upload("/api/me/avatar", file))) { _ => Toasts.show("アイコンを登録しました"); Store.reloadMe() }
 }
 
 def removeAvatar(): Unit = Dialog.confirm("アイコンの画像を外しますか？", "外す") {
-  Store.report(Api.delete("/api/me/avatar")) { _ => Store.toast("アイコンを外しました"); Store.reloadMe() }
+  Toasts.report(Api.delete("/api/me/avatar")) { _ => Toasts.show("アイコンを外しました"); Store.reloadMe() }
 }
 
 def me = Store.me.mapC(_.toList)
-def brief = Store.me.mapC(_.map(Users.brief))
+def brief = Store.me.mapC(_.map(Users.person))
 def mail = Store.config.mapC(_.exists(_.mailEnabled))
 val zones = List("Asia/Tokyo", "UTC", "Asia/Seoul", "Asia/Shanghai", "Asia/Singapore", "America/Los_Angeles", "America/New_York", "Europe/London")
 </script>
@@ -66,7 +57,7 @@ val zones = List("Asia/Tokyo", "UTC", "Asia/Seoul", "Asia/Shanghai", "Asia/Singa
             <div class="row btns">
               <label class="btn small">画像を選ぶ<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" @change="upload(s, event)"></label>
               <button v-if="m.hasOwnAvatar" class="ghost small" @click="removeAvatar()">外す</button>
-              <span v-if="s.uploading" class="muted small">アップロード中…</span>
+              <span v-if="s.upload.busy" class="muted small">アップロード中…</span>
             </div>
           </div>
         </div>

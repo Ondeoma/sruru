@@ -45,7 +45,7 @@ def mounted(s: State, props: Props): Unit = {
   Api.groups().foreach(s.groups := _)
   Api.idpInfo().foreach(i => s.info := Some(i))
   if (isNew(props)) Api.param("protocol").foreach(p => choose(s, p))
-  else Store.report(Api.get[AppDto](s"/api/admin/apps/${props.id}"))(fill(s, _))
+  else Toasts.report(Api.get[AppDto](s"/api/admin/apps/${props.id}"))(fill(s, _))
   pendingSecret.v.filter(_._1 == props.id).foreach { x => s.secret := Some(x._2); pendingSecret := None }
 }
 
@@ -96,54 +96,54 @@ def request(s: State): AppReq = {
 def save(s: State, props: Props): Unit =
   if (isNew(props))
     Store.inline(Api.post[AppCreatedDto]("/api/admin/apps", Api.json(request(s))), s.error, s.busy) { r =>
-      Store.toast("アプリケーションを追加しました")
+      Toasts.show("アプリケーションを追加しました")
       r.clientSecret.foreach(x => pendingSecret := Some((r.app.id.toString, x)))
       Router.go(s"/admin/apps/${r.app.id}")
     }
   else
-    Store.inline(Api.put[AppDto](s"/api/admin/apps/${props.id}", Api.json(request(s))), s.error, s.busy) { a => fill(s, a); Store.toast("保存しました") }
+    Store.inline(Api.put[AppDto](s"/api/admin/apps/${props.id}", Api.json(request(s))), s.error, s.busy) { a => fill(s, a); Toasts.show("保存しました") }
 
 def parseMetadata(s: State): Unit =
-  Store.report(Api.postRaw[SamlDto]("/api/admin/saml/parse-metadata", s.metadata.v, "application/xml")) { m =>
+  Toasts.report(Api.postRaw[SamlDto]("/api/admin/saml/parse-metadata", s.metadata.v, Some("application/xml"))) { m =>
     fillSaml(s, m)
     s.metaOpen := false
     s.metadata := ""
-    Store.toast("メタデータを読み込みました。内容を確かめて保存してください")
+    Toasts.show("メタデータを読み込みました。内容を確かめて保存してください")
   }
 
-def loadMetaFile(s: State, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { f =>
+def loadMetaFile(s: State, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { f =>
   f.asInstanceOf[scala.scalajs.js.Dynamic].text().asInstanceOf[scala.scalajs.js.Promise[String]].toFuture.foreach(s.metadata := _)
 }
 
 def rotateSecret(s: State, props: Props): Unit =
   Dialog.confirm("クライアントシークレットを作り直しますか？今のシークレットはすぐに使えなくなります。", "作り直す") {
-    Store.report(Api.post[SecretDto](s"/api/admin/apps/${props.id}/secret"))(r => s.secret := r.clientSecret)
+    Toasts.report(Api.post[SecretDto](s"/api/admin/apps/${props.id}/secret"))(r => s.secret := r.clientSecret)
   }
 
-def uploadIcon(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.file(e).foreach { f =>
+def uploadIcon(s: State, props: Props, e: org.scalajs.dom.Event): Unit = Dom.takeFiles(e).headOption.foreach { f =>
   Img.upload(s"/api/admin/apps/${props.id}/icon", f).onComplete {
-    case Success(_) => Store.toast("アイコンを登録しました"); Api.get[AppDto](s"/api/admin/apps/${props.id}").foreach(a => s.app := Some(a))
-    case Failure(x) => Store.error(x)
+    case Success(_) => Toasts.show("アイコンを登録しました"); Api.get[AppDto](s"/api/admin/apps/${props.id}").foreach(a => s.app := Some(a))
+    case Failure(x) => Toasts.error(x)
   }
 }
 
 /** サイトのアイコン（favicon）を取り直す（起動の URL などのサイトから）. */
 def fetchIcon(s: State, props: Props): Unit =
-  Store.report(Api.post[Option[AppDto]](s"/api/admin/apps/${props.id}/icon/fetch")) { a =>
-    Store.toast("サイトのアイコンを登録しました"); a.foreach(x => s.app := Some(x))
+  Toasts.report(Api.post[Option[AppDto]](s"/api/admin/apps/${props.id}/icon/fetch")) { a =>
+    Toasts.show("サイトのアイコンを登録しました"); a.foreach(x => s.app := Some(x))
   }
 
 def removeIcon(s: State, props: Props): Unit =
-  Store.report(Api.delete(s"/api/admin/apps/${props.id}/icon"))(_ => Api.get[AppDto](s"/api/admin/apps/${props.id}").foreach(a => s.app := Some(a)))
+  Toasts.report(Api.delete(s"/api/admin/apps/${props.id}/icon"))(_ => Api.get[AppDto](s"/api/admin/apps/${props.id}").foreach(a => s.app := Some(a)))
 
 def remove(s: State, props: Props): Unit = s.app.v.foreach { a =>
-  Dialog.typeToConfirm(s"アプリケーション「${a.name}」を削除します。このアプリへのログインはできなくなります。", a.slug, "削除する") {
-    Store.report(Api.delete(s"/api/admin/apps/${props.id}")) { _ => Store.toast("削除しました"); Router.go("/admin/apps") }
+  Dialogs.typeToConfirm(s"アプリケーション「${a.name}」を削除します。このアプリへのログインはできなくなります。", a.slug, "削除する") {
+    Toasts.report(Api.delete(s"/api/admin/apps/${props.id}")) { _ => Toasts.show("削除しました"); Router.go("/admin/apps") }
   }
 }
 
 def preview(s: State, props: Props, userId: UUID): Unit =
-  Store.report(Api.post[Json](s"/api/admin/apps/${props.id}/preview", Api.json(PreviewReq(userId))))(j => s.preview := j.spaces2)
+  Toasts.report(Api.post[Json](s"/api/admin/apps/${props.id}/preview", Api.json(PreviewReq(userId))))(j => s.preview := j.spaces2)
 
 def isSaml(s: State) = s.protocol.mapC(_ == "saml")
 def isOidc(s: State) = s.protocol.mapC(_ == "oidc")
@@ -280,7 +280,7 @@ val nameIdFormats = List(
         <template v-for="a in appList(s)">
           <h3>渡す情報を試す</h3>
           <p class="small muted">保存した設定で、選んだユーザーに渡す情報を表示します。</p>
-          <div class="pick-user"><UserPicker :onPick="id => preview(s, props, id)" placeholder="ユーザーを選ぶ…" /></div>
+          <div class="pick-user"><UserPicker :combo="true" :search="UserSearch.search" :hint="UserSearch.hint" :onPick="p => preview(s, props, UserSearch.id(p))" placeholder="ユーザーを選ぶ…" /></div>
           <pre v-if="s.preview.v.nonEmpty" class="json">{{ s.preview }}</pre>
         </template>
       </section>

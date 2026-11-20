@@ -20,7 +20,7 @@ def mounted(s: State): Unit = {
 }
 
 def answer(s: State, approve: Boolean): Unit = s.req.v.foreach { r =>
-  Store.inline(Api.post[RedirectDto]("/api/consent", ConsentReq(r.id, approve).asJson), s.error, s.busy)(x => Dom.goto(x.redirect))
+  Store.inline(Api.post[RedirectDto]("/api/consent", ConsentReq(r.id, approve).asJson), s.error, s.busy)(x => Nav.goto(x.redirect))
 }
 
 def items(s: State) = s.req.mapC(_.toList)

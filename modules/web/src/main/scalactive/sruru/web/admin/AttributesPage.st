@@ -13,7 +13,7 @@ def initState() = State()
 
 def mounted(s: State): Unit = { pageTitle("カスタム属性"); load(s) }
 
-def load(s: State): Unit = Store.report(Api.attributeDefs())(ds => s.defs := ds.sortBy(d => (d.sort, d.key)))
+def load(s: State): Unit = Toasts.report(Api.attributeDefs())(ds => s.defs := ds.sortBy(d => (d.sort, d.key)))
 
 /** 編集を始める（None なら新しく作る）. */
 def edit(s: State, d: Option[AttributeDefDto]): Unit = {
@@ -27,13 +27,13 @@ def save(s: State): Unit = {
   val d = AttributeDefDto(s.key.v.trim, s.label.v.trim, s.kind.v, s.desc.v.trim, s.userEditable.v, s.required.v, Fmt.opt(s.scimPath.v), s.sort.v)
   if (d.key.isEmpty) s.error := "キーを入力してください"
   else Store.inline(Api.putUnit(s"/api/admin/attributes/${Api.enc(d.key)}", Api.json(d)), s.error, s.busy) { _ =>
-    s.editing := None; Store.toast("保存しました"); load(s)
+    s.editing := None; Toasts.show("保存しました"); load(s)
   }
 }
 
 def remove(s: State, d: AttributeDefDto): Unit =
   Dialog.confirm(s"属性「${d.label}」の定義を削除しますか？ユーザーに入っている値は残ります。", "削除") {
-    Store.report(Api.delete(s"/api/admin/attributes/${Api.enc(d.key)}"))(_ => load(s))
+    Toasts.report(Api.delete(s"/api/admin/attributes/${Api.enc(d.key)}"))(_ => load(s))
   }
 
 def kindLabel(k: String): String = AttrKinds.all.toMap.getOrElse(k, k)
