@@ -26,9 +26,12 @@ lazy val libSharedJS = ProjectRef(sbirdsLib, "sharedJS")
 lazy val libObserve = ProjectRef(sbirdsLib, "observe")
 lazy val libAuth = ProjectRef(sbirdsLib, "auth")
 lazy val libHttp = ProjectRef(sbirdsLib, "http")
+lazy val libMcp = ProjectRef(sbirdsLib, "mcp")
 lazy val libPush = ProjectRef(sbirdsLib, "push")
 lazy val libWeb = ProjectRef(sbirdsLib, "web")
 lazy val libMail = ProjectRef(sbirdsLib, "mail")
+lazy val libDb = ProjectRef(sbirdsLib, "db")
+lazy val libNet = ProjectRef(sbirdsLib, "net")
 
 lazy val commonTest = Seq(
   libraryDependencies ++= Seq(
@@ -85,7 +88,7 @@ lazy val security = (project in file("modules/security"))
   )
 
 lazy val db = (project in file("modules/db"))
-  .dependsOn(core, libObserve)
+  .dependsOn(core, libObserve, libDb)
   .settings(commonTest)
   .settings(
     libraryDependencies ++= Seq(
@@ -126,9 +129,11 @@ lazy val api = (project in file("modules/api"))
     shared.jvm,
     libObserve,
     libHttp,
+    libMcp,
     libPush,
     libMail,
-    libAuth
+    libAuth,
+    libNet
   )
   .settings(commonTest)
   .settings(

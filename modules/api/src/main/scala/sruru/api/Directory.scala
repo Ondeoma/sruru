@@ -48,7 +48,8 @@ final class Directory(val users: UserStore,
     if u.hasAvatar then
       Some(s"${cfg.publicUrl}/avatars/${u.id}?v=${u.avatarUpdatedAt.map(_.getEpochSecond).getOrElse(0L)}")
     else
-      u.pictureUrl.orElse(Option.when(gravatar)(u.email).flatten.map(e =>
+      // Gravatar は確認済みのアドレスのものだけ（未確認のアドレスで他人の顔を出せないように）
+      u.pictureUrl.orElse(Option.when(gravatar)(u.verifiedEmail).flatten.map(e =>
         s"https://www.gravatar.com/avatar/${Crypto.hex(Crypto.sha256(e.trim.toLowerCase))}?d=identicon&s=256"
       ))
 
@@ -94,8 +95,11 @@ final class Directory(val users: UserStore,
         case v :: _ => IO.pure(Left(v))
         case Nil =>
           u.filter(_ => p.password.historyCount > 0).fold(IO.pure(Right(()))) { x =>
-            users.passwordHistory(x.id, p.password.historyCount).map { hs =>
-              Either.cond(!hs.exists(h => Passwords.verify(pw, h)), (), s"直近${p.password.historyCount}回に使ったパスワードは使えません")
+            // Argon2id を履歴の件数ぶん計算するので blocking のスレッドで
+            users.passwordHistory(x.id, p.password.historyCount).flatMap { hs =>
+              IO.blocking(hs.exists(h => Passwords.verify(pw, h))).map(used =>
+                Either.cond(!used, (), s"直近${p.password.historyCount}回に使ったパスワードは使えません")
+              )
             }
           }
       }
@@ -189,9 +193,9 @@ final class Directory(val users: UserStore,
    */
   private def ruleUsable(g: Group, all: Map[UUID, Group]): Boolean = !Membership.expand(List(g.id), all).isAdmin
 
-  /** 条件の評価に使う値. 未確認のメールアドレスは本人が自由に書けるので使わない. */
+  /** 条件の評価に使う値. メールアドレスは確認済みの値だけ（Context.user. 未確認のアドレスは本人が自由に書けるので使わない）. */
   private def ruleContext(u: User, m: Membership, pic: Option[String]): Json =
-    Json.obj("user" -> Context.user(u.copy(email = u.email.filter(_ => u.emailVerified)), m, pic))
+    Json.obj("user" -> Context.user(u, m, pic))
 
   /** ルールのあるグループのうち、ユーザーが条件を満たすもの. */
   private def dynamicMatches(u: User,
@@ -276,7 +280,8 @@ final class Directory(val users: UserStore,
       u.phoneNumber,
       Some(u.createdAt),
       Some(u.updatedAt),
-      u.lastLoginAt
+      u.lastLoginAt,
+      u.verifiedEmail
     )
 
   def groupDto(g: Group, count: Int): GroupDto =

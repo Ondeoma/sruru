@@ -1,24 +1,23 @@
 package sruru.app
 
+import sbirds.db.*
 import sruru.core.ErrorCode
 
 import sbirds.shared.AppError
 
-import sbirds.http.Errors
+import sbirds.http.{BodyLimit, Env, Errors, Health, RateLimit, SecurityHeaders, Spa}
+import sbirds.net.NetGuard
 
 import cats.effect.*
 import cats.syntax.all.*
 import com.comcast.ip4s.*
 import doobie.implicits.*
-import fs2.io.file.Path
 import fs2.io.net.Network
 import fs2.io.net.tls.TLSParameters
 import org.http4s.*
-import org.http4s.dsl.io.*
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.server.middleware.{EntityLimiter, ErrorHandling}
-import org.http4s.server.staticcontent.*
+import org.http4s.server.middleware.ErrorHandling
 import sruru.api.*
 import sruru.db.*
 import sbirds.mail.{SmtpConfig, SmtpMailer}
@@ -49,7 +48,7 @@ object Main extends IOApp.Simple {
   private given org.typelevel.log4cats.LoggerFactory[IO] = org.typelevel.log4cats.slf4j.Slf4jFactory.create[IO]
 
   /** バックエンドのパス（画面の index.html を返さない）. */
-  private val backendPrefixes = Set(
+  private val backendPrefixes = List(
     "api",
     "auth",
     "oauth2",
@@ -65,6 +64,12 @@ object Main extends IOApp.Simple {
   )
 
   /** トレース・メトリクス・アクセスログの対象（画像・/healthz は除く）. クエリ（?code=・?state=・SAMLRequest）は記録しない. */
+  /** ログインの入口（人がブラウザから送るもの）. IP ごとの回数の制限で数える. */
+  private def loginEntry(req: Request[IO]): Boolean = {
+    val path = req.pathInfo.renderString
+    req.method == Method.POST && (path.startsWith("/api/login/") || path == "/api/setup")
+  }
+
   private val tracedPrefixes = List("/api", "/auth", "/oauth2", "/oauth", "/saml", "/scim", "/mcp", "/.well-known")
 
   def run: IO[Unit] =
@@ -80,6 +85,12 @@ object Main extends IOApp.Simple {
         http <- EmberClientBuilder.default[IO].withTimeout(
           30.seconds
         ).withMaxResponseHeaderSize(64 * 1024).build.map(HttpClientTelemetry(_))
+        // 管理者が登録したサイトのアイコンを取りに行く（内部のアドレスにはつながない. 開発用の http://localhost は DEV_MODE のときだけ）
+        iconHttp <- NetGuard.client(
+          NetGuard.Policy.of(cfg.api.devMode),
+          timeout = 30.seconds,
+          maxResponseHeaderSize = Some(64 * 1024) // 大きなヘッダーを返すサイトもある
+        ).map(HttpClientTelemetry(_))
         box = new SecretBox(cfg.appSecret)
         users = new UserStore(xa)
         groups = new GroupStore(xa)
@@ -159,7 +170,7 @@ object Main extends IOApp.Simple {
           mail,
           box,
           settings,
-          new SiteIcon(http),
+          new SiteIcon(iconHttp),
           auth,
           cfg.api
         )
@@ -178,17 +189,26 @@ object Main extends IOApp.Simple {
           )(lock.exclusive("dynamic-groups", 50.minutes)(dir.recomputeAll))
         )
         _ <- loops.traverse_(_.background)
-        rest = healthRoutes(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+>
+        rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> oidc.routes <+>
           oauth.routes <+> saml.routes <+>
           resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
         app = rest <+> new McpRoutes(rest, auth, cfg.api).routes
-        all = cfg.staticDir.fold(app)(d => app <+> spa(d))
+        // IP ごとの回数の制限（ログインの入口だけ. 1分あたり RATE_LIMIT_AUTH 回. 既定 60. 0 なら制限しない）.
+        // 送ってきた人の IP は、ほかと同じくポリシー（信じるプロキシ・利用者のアドレスのヘッダー）で決める.
+        // トークン・SCIM・他サイトからのリダイレクトで来る入口は、同じ IP からまとめて来るので数えない.
+        loginLimit = RateLimit.counter(Env.int("RATE_LIMIT_AUTH").getOrElse(60)).toList
+        limited = RateLimit.keyed(app, ErrorCode.TooManyRequests)(req =>
+          auth.reqCtx(req).map(c => Option(c.ip).filter(_ != "-").map(RateLimit.keyOf))
+        )(req => if (loginEntry(req)) loginLimit else Nil)
+        all = cfg.staticDir.fold(limited)(d => limited <+> Spa.routes(d, Spa.firstSegment(backendPrefixes*)))
         // 本文は 2MB まで（画像は 512KB まで. それより大きな要求で資源を使い切らないように）
         httpApp <- HttpTelemetry(
-          securityHeaders(cfg.api.cookieSecure)(EntityLimiter.httpApp(
-            ErrorHandling.Custom.recoverWith(all.orNotFound)(handler),
-            2L * 1024 * 1024
-          )),
+          securityHeaders(cfg.api.cookieSecure)(
+            ErrorHandling.Custom.recoverWith(BodyLimit(
+              2L * 1024 * 1024,
+              ErrorCode.RequestTooLarge
+            )(all).orNotFound)(handler)
+          ),
           tracedPrefixes
         )
         _ <- EmberServerBuilder.default[IO]
@@ -259,23 +279,15 @@ object Main extends IOApp.Simple {
       IO.println(s"[sruru] 管理者がいません。画面の /setup で最初の管理者を作ってください。セットアップのトークン: $t")
     ))
 
-  /** ロードバランサー用のヘルスチェック. DB（プライマリ）に書けない状態なら 503. */
-  private def healthRoutes(xa: doobie.Transactor[IO], node: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case GET -> Root / "healthz" =>
-      sql"select not pg_is_in_recovery()".query[Boolean].unique.transact(xa).timeout(3.seconds).attempt.flatMap {
-        case Right(true) => text(Status.Ok, s"ok $node")
-        case Right(false) => text(Status.ServiceUnavailable, "database is read-only (not primary)")
-        // 例外の内容は認証なしの応答に出さず、ログにだけ残す
-        case Left(e) => sbirds.observe.Log.report(ErrorCode.HealthCheckFailed, e.getMessage, e) *>
-            text(Status.ServiceUnavailable, "database unavailable")
-      }
-  }
-
-  private def text(status: Status, body: String): IO[Response[IO]] =
-    IO.pure(Response[IO](status).withEntity(body)(using EntityEncoder.stringEncoder))
+  /** ロードバランサー用のヘルスチェック. DB（プライマリ）に書けない状態なら 503（例外の内容は応答に出さず、ログにだけ残す）. */
+  private def health(xa: doobie.Transactor[IO], node: String): HttpRoutes[IO] =
+    Health.routes(
+      Database.isPrimary(xa),
+      s"ok $node",
+      e => sbirds.observe.Log.report(ErrorCode.HealthCheckFailed, e.getMessage, e)
+    )
 
   private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
-    case _: EntityLimiter.EntityTooLarge => Errors.respond(AppError(ErrorCode.RequestTooLarge))
     case e: AppError => Errors.respond(e)
     case e => Errors.respond(AppError(ErrorCode.Unexpected, None, Some(e)))
   }
@@ -283,27 +295,28 @@ object Main extends IOApp.Simple {
   /** RUM の読み込み先（CSP の script-src・connect-src に足す. 未設定なら足さない）. */
   private lazy val rumOrigin: Option[String] = RumRoutes.origin
 
-  /** すべての応答に付けるヘッダー（埋め込み・MIME の推測の禁止）. 画面には CSP も付ける. */
-  private def securityHeaders(https: Boolean)(app: HttpApp[IO]): HttpApp[IO] = HttpApp[IO] { req =>
-    app.run(req).map { r =>
-      val base0 = r.putHeaders(
-        "X-Content-Type-Options" -> "nosniff",
-        "Referrer-Policy" -> "strict-origin-when-cross-origin",
-        "X-Frame-Options" -> "DENY"
-      )
-      // 公開の URL が https なら、以後 http で接続させない（Cookie の盗み見・SSL ストリップを防ぐ）
-      val base =
-        if https then base0.putHeaders("Strict-Transport-Security" -> "max-age=31536000; includeSubDomains") else base0
-      val html = r.contentType.exists(_.mediaType == MediaType.text.html)
-      if html && r.headers.get(org.typelevel.ci.CIString("Content-Security-Policy")).isEmpty then {
-        // 画面のブラウザの観測（skorimako の RUM）はログインした後の画面だけで読む. ログイン・同意・パスワードの再設定などの画面では
-        // 外部のスクリプトを許さない（画面の Observe もその画面で開いたページでは読み込まない）
-        val rum = rumOrigin.filterNot(_ => sruru.shared.Pages.isPublic(req.pathInfo.renderString)).fold("")(" " + _)
-        base.putHeaders("Content-Security-Policy" ->
-          s"default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'$rum; connect-src 'self'$rum; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:")
-      } else base
-    }
+  /**
+   * 画面（HTML で、応答が自分で CSP を付けていないもの）の CSP.
+   * 画面のブラウザの観測（skorimako の RUM）はログインした後の画面だけで読む. ログイン・同意・パスワードの再設定などの画面では
+   * 外部のスクリプトを許さない（画面の Observe もその画面で開いたページでは読み込まない）.
+   */
+  private def pageCsp(req: Request[IO]): String = {
+    val rum = rumOrigin.filterNot(_ => sruru.shared.Pages.isPublic(req.pathInfo.renderString)).fold("")(" " + _)
+    s"default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'$rum; connect-src 'self'$rum; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https: http:"
   }
+
+  /**
+   * すべての応答に付けるヘッダー（埋め込み・MIME の推測の禁止）. 画面には CSP も付ける.
+   * 公開の URL が https なら、以後 http で接続させない（Cookie の盗み見・SSL ストリップを防ぐ）.
+   */
+  private def securityHeaders(https: Boolean)(app: HttpApp[IO]): HttpApp[IO] =
+    SecurityHeaders.appWith(req =>
+      SecurityHeaders.Policy(
+        hsts = SecurityHeaders.hsts(https, "max-age=31536000; includeSubDomains"),
+        csp = Some(pageCsp(req)),
+        cspHtmlOnly = true
+      )
+    )(app)
 
   /** 期限切れのセッション・トークン・監査ログの掃除（1時間ごと. 1ノードだけ）. */
   private def purgeLoop(sessions: SessionStore,
@@ -353,19 +366,4 @@ object Main extends IOApp.Simple {
           IO.whenA(p.audit.retentionDays > 0)(audit.purge(now.minusSeconds(p.audit.retentionDays.toLong * 86400)).void)
       } yield ()
     })
-
-  /** ビルド済みの画面の配信. 存在しないパスは index.html（SPA）. */
-  private def spa(dir: String): HttpRoutes[IO] = {
-    val files = fileService[IO](FileService.Config(dir))
-    val index = HttpRoutes.of[IO] {
-      case req @ GET -> _
-          if !backendPrefixes.contains(req.pathInfo.segments.headOption.map(_.decoded()).getOrElse("")) =>
-        StaticFile.fromPath(Path(dir) / "index.html", Some(req)).getOrElseF(NotFound())
-    }
-    HttpRoutes[IO] { req =>
-      val cc =
-        if req.pathInfo.renderString.startsWith("/assets/") then "public, max-age=31536000, immutable" else "no-cache"
-      (files <+> index).run(req).map(_.putHeaders("Cache-Control" -> cc))
-    }
-  }
 }

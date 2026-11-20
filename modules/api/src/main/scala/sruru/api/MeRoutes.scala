@@ -129,10 +129,12 @@ final class MeRoutes(dir: Directory,
     )
 
   private def getMe(req: Request[IO]): IO[Response[IO]] =
-    authed(req)(p => me(p.user).flatMap(Ok(_)))
+    authed(req)(p => me(p.user).map(outward(p, _)).flatMap(Ok(_)))
 
   private def putMe(req: Request[IO]): IO[Response[IO]] =
-    authed(req)(p => body[MeUpdateReq](req)(r => ctx(req).flatMap(c => okJson(updateMe(p, r, c)))))
+    authed(req)(p =>
+      body[MeUpdateReq](req)(r => ctx(req).flatMap(c => okJson(updateMe(p, r, c).map(_.map(outward(p, _))))))
+    )
 
   private def postMeAvatar(req: Request[IO]): IO[Response[IO]] =
     authed(req) { p =>
@@ -161,7 +163,7 @@ final class MeRoutes(dir: Directory,
         case ((m, pol), ts) =>
           val confirmed = ts.filter(_.confirmed)
           if dir.mfaRequired(p.user, m, pol) && confirmed.size <= 1 && confirmed.exists(_.id == id) &&
-            !(pol.mfa.allowEmail && p.user.email.isDefined)
+            !(pol.mfa.allowEmail && p.user.email.isDefined && p.user.emailVerified)
           then
             err(ErrorCode.LastAuthenticatorRequired)
           else
@@ -302,13 +304,22 @@ final class MeRoutes(dir: Directory,
             factors.consumeEmailToken(tk.id).flatMap {
               case false => err(ErrorCode.EmailLinkUsed)
               case true =>
-                dir.users.save(p.user.copy(emailVerified = true)) *>
+                // 確認が済んだので、確認済みの値を今のアドレスに入れ替える
+                dir.users.save(p.user.withEmail(p.user.email, verified = true)) *>
                   audited(audit, req, p, "user.email.verify", audit.userTarget(p.user)) *> NoContent()
             }
           case _ => err(ErrorCode.EmailLinkExpired)
         }
       }
     }
+
+  /**
+   * 画面（ブラウザのログイン）以外、つまり API トークン・OAuth でほかのサービスが読むときは、email を確認済みの値にする
+   * （未確認のアドレスをほかのサービスに渡さない）. 画面には今の値（未確認のことがある）と確認済みの値の両方を返す.
+   */
+  private def outward(p: Principal, d: MeDto): MeDto =
+    if p.via.isInstanceOf[Via.Web] then d
+    else d.copy(email = d.verifiedEmail, emailVerified = d.verifiedEmail.isDefined)
 
   def me(u: User): IO[MeDto] =
     for {
@@ -343,7 +354,8 @@ final class MeRoutes(dir: Directory,
       u.locale,
       u.zoneinfo,
       u.phoneNumber,
-      rules
+      rules,
+      u.verifiedEmail
     )
 
   /** ポータルに出すアプリ（使えるものだけ）. 本人が並べ替えた順. 並べ替えた後に増えたアプリは後ろに名前の順. */
@@ -371,7 +383,9 @@ final class MeRoutes(dir: Directory,
         Attrs.validate(defs, r.attributes, onlyEditable = true, p.user.attributes)
       ).tupled match {
         case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
-        case Right((email, attrs)) =>
+        case Right((sent, attrs)) =>
+          // トークンで読んだ値（確認済みのアドレス）がそのまま返ってきたときは、変更ではない（確認待ちのアドレスを消さない）
+          val email = if !p.via.isInstanceOf[Via.Web] && sent == p.user.verifiedEmail then p.user.email else sent
           val external = p.user.source != "local"
           val emailChanged = email != p.user.email
           if external && emailChanged then Res.fail(ErrorCode.EmailManagedExternally)
@@ -383,12 +397,14 @@ final class MeRoutes(dir: Directory,
               case true => emailFree(email, p.id).flatMap {
                   case false => Res.fail(AppError(ErrorCode.EmailInUse))
                   case true =>
-                    val u2 = p.user.copy(
+                    // 変えたアドレスは未確認. 確認済みの値（verifiedEmail）は残るので、確認が済むまで各サービスには以前の
+                    // アドレスを渡し続ける. 確認済みのアドレスに戻したときは、確認済みのまま
+                    val backToVerified = email.exists(e => p.user.verifiedEmail.exists(_.equalsIgnoreCase(e)))
+                    val verified = if emailChanged then backToVerified else p.user.emailVerified
+                    val u2 = p.user.withEmail(email, verified).copy(
                       name = r.name.trim.take(200).some.filter(_.nonEmpty).getOrElse(p.user.name),
                       givenName = r.givenName.filter(_.nonEmpty),
                       familyName = r.familyName.filter(_.nonEmpty),
-                      email = email,
-                      emailVerified = if emailChanged then false else p.user.emailVerified,
                       attributes = attrs,
                       locale = r.locale.filter(_.nonEmpty),
                       zoneinfo = r.zoneinfo.filter(_.nonEmpty),
@@ -409,17 +425,31 @@ final class MeRoutes(dir: Directory,
   private def emailFree(email: Option[String], self: UUID): IO[Boolean] =
     email.fold(IO.pure(true))(e => dir.users.byEmail(e).map(_.forall(_.id == self)))
 
+  /**
+   * 現在のパスワードの確認には、ログインと同じ試行の制限をかける（IP ごとの回数・アカウントのロック.
+   * 盗んだ Cookie から、今のパスワードを総当たりで当てられないように）.
+   */
   private def changePassword(p: Principal, r: PasswordChangeReq, c: ReqCtx): Res[Unit] =
-    p.user.passwordHash match {
-      case Some(h) if !Passwords.verify(r.current, h) =>
-        audit.byPrincipal(c, p, "user.password.change", audit.userTarget(p.user), success = false) *>
-          Res.fail(AppError(ErrorCode.CurrentPasswordWrong))
-      case None if p.user.source != "local" => Res.fail(ErrorCode.ExternalIdpAccount)
-      case _ =>
-        dir.setPassword(p.user, r.next, mustChange = false, keepLogin = p.login.map(_.id)).flatMap {
-          case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
-          case Right(_) => audit.byPrincipal(c, p, "user.password.change", audit.userTarget(p.user)).as(Right(()))
-        }
+    (login.throttled(c), Time.now).flatMapN {
+      (thr, now) =>
+        if thr then Res.fail(AppError(ErrorCode.TooManyAttempts))
+        // ロック中はパスワードを確かめない（正誤で応答を変えると、ロック中に総当たりできてしまう）
+        else if p.user.passwordHash.isDefined && p.user.locked(now) then Res.fail(AppError(ErrorCode.AccountLocked))
+        else
+          // Argon2id は重いので blocking のスレッドで確かめる
+          p.user.passwordHash.traverse(h => IO.blocking(Passwords.verify(r.current, h))).flatMap {
+            case Some(false) =>
+              login.countFailure(c, Some(p.user)) *>
+                audit.byPrincipal(c, p, "user.password.change", audit.userTarget(p.user), success = false) *>
+                Res.fail(AppError(ErrorCode.CurrentPasswordWrong))
+            case None if p.user.source != "local" => Res.fail(ErrorCode.ExternalIdpAccount)
+            case _ =>
+              dir.setPassword(p.user, r.next, mustChange = false, keepLogin = p.login.map(_.id)).flatMap {
+                case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
+                case Right(_) =>
+                  audit.byPrincipal(c, p, "user.password.change", audit.userTarget(p.user)).as(Right(()))
+              }
+          }
     }
 
   private def startTotp(p: Principal): IO[TotpSetupDto] =

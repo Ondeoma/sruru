@@ -1,5 +1,6 @@
 package sruru.db
 
+import sbirds.db.*
 import sruru.core.ErrorCode
 
 import sbirds.shared.AppError

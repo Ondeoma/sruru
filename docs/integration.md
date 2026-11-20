@@ -14,6 +14,10 @@ sruru 側は次のように登録します（管理画面 →「アプリケー�
 | スコープ | `openid profile email groups`（`groups` を外しても、「グループを ID トークンに含める」がオンなら `groups` クレームは入る） |
 | 起動の URL | `https://<サービスの PUBLIC_URL>/`（ポータルに出す） |
 
+`email` クレームに入るのは、確認済みのメールアドレスだけです（入るときは `email_verified` は常に `true`）。
+本人がアドレスを変えても、確認が済むまでは以前の確認済みのアドレスが入ります。確認済みのアドレスがないユーザーでは、
+`email` も `email_verified` も入りません。アプリ側は `email` がないログインを扱えるようにし、本人の特定には `sub` を使ってください。
+
 アプリ側の設定の例（環境変数の名前はアプリによって違います）:
 
 ```bash
@@ -46,12 +50,14 @@ ADMIN_GROUPS=myapp-admins                   # sruru のグループ名
 `phone_number`・`is_admin`・`source`・`external_id`・`groups`・`group_ids`・`attributes.<キー>`、`app.slug`・`app.name`。
 フィルター: `lower`・`upper`・`trim`・`default:"値"`・`join:","`・`split:","`・`first`・`last`・`filter_prefix:"p"`・`strip_prefix:"p"`・
 `replace:"a":"b"`・`prepend:"p"`・`append:"s"`・`unique`・`email_local`・`email_domain`・`string`・`bool`。
+`user.email` は確認済みのメールアドレスです（確認待ちの間は以前の確認済みのアドレス。なければ空で、`email_verified` は `false`）。
 アプリの画面の「試す」で、ユーザーを選んで実際に渡す値を確かめられます。
 
 ## SAML の SP
 
 1. SP のメタデータ（XML）があれば、アプリの作成の画面に貼り付けて読み込みます（エンティティ ID・ACS・証明書が入る）。
 2. NameID の式（既定 `{{user.email}}`）と形式を選びます。永続的な ID にするなら `{{user.id}}` と `persistent`。
+   `user.email` は確認済みのアドレスだけなので、確認済みのアドレスがないユーザーは NameID が空になります（メールアドレスを確認してもらうか、`{{user.id}}` を使う）。
 3. SP には sruru のメタデータ `https://id.example.com/saml/metadata` を登録します（SSO の URL `…/saml/sso`、証明書を含む）。
 4. 対応がなければ `email`・`name`・`username`・`givenName`・`surname`・`groups` の属性を送ります。
 

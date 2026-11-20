@@ -93,11 +93,11 @@ final class ScimRoutes(dir: Directory,
 
   private def getScimV2Groups(req: Request[IO]): IO[Response[IO]] =
     scimAuth(req) { _ =>
-      q(req, "filter").traverse(ScimFilter.parse) match {
+      param(req, "filter").traverse(ScimFilter.parse) match {
         case Left(e) => scimErr(ErrorCode.ScimFilterInvalid, e, Some("invalidFilter"))
         case Right(filter) =>
           val (start, count) = paging(req)
-          val excluded = q(req, "excludedAttributes").exists(_.toLowerCase.contains("members"))
+          val excluded = param(req, "excludedAttributes").exists(_.toLowerCase.contains("members"))
           (
             dir.groups.all,
             if excluded then IO.pure(Map.empty[UUID, List[UUID]]) else dir.groups.allMembers
@@ -229,8 +229,11 @@ final class ScimRoutes(dir: Directory,
       ).dropNullValues,
       "displayName" -> u.name.asJson,
       "active" -> (!u.disabled).asJson,
+      // 渡すのは確認済みのアドレスだけ（確認待ちの間は以前の確認済みのアドレス）
       "emails" ->
-        u.email.map(e => List(Json.obj("value" -> e.asJson, "type" -> "work".asJson, "primary" -> true.asJson))).asJson,
+        u.verifiedEmail.map(e =>
+          List(Json.obj("value" -> e.asJson, "type" -> "work".asJson, "primary" -> true.asJson))
+        ).asJson,
       "phoneNumbers" -> u.phoneNumber.map(p => List(Json.obj("value" -> p.asJson, "type" -> "work".asJson))).asJson,
       "photos" -> pic.map(p => List(Json.obj("value" -> p.asJson, "type" -> "photo".asJson))).asJson,
       "locale" -> u.locale.asJson,
@@ -288,13 +291,14 @@ final class ScimRoutes(dir: Directory,
         j,
         "active"
       ).asBoolean.orElse(ScimJson.get(j, "active").asString.map(_.equalsIgnoreCase("true"))).getOrElse(true)
-      u.copy(
+      // SCIM で入ってきたアドレスは確認済みとして扱う. こちらが出した値（確認済みのアドレス）がそのまま返ってきたときは、
+      // 変更ではないので、本人が変えて確認待ちのアドレスを消さない
+      val mailed = if mail == u.verifiedEmail then u else u.withEmail(mail, verified = mail.isDefined)
+      mailed.copy(
         username = name,
         name = display,
         givenName = str(j, "name", "givenName"),
         familyName = str(j, "name", "familyName"),
-        email = mail,
-        emailVerified = mail.isDefined,
         disabled = !active,
         externalId = str(j, "externalId").orElse(u.externalId),
         phoneNumber = phone,
@@ -312,6 +316,7 @@ final class ScimRoutes(dir: Directory,
       "",
       None,
       false,
+      None,
       "",
       None,
       None,
@@ -357,12 +362,12 @@ final class ScimRoutes(dir: Directory,
 
   private def paging(req: Request[IO]): (Int, Int) =
     (
-      q(req, "startIndex").flatMap(_.toIntOption).map(math.max(1, _)).getOrElse(1),
-      q(req, "count").flatMap(_.toIntOption).map(n => math.max(0, math.min(n, 1000))).getOrElse(100)
+      param(req, "startIndex").flatMap(_.toIntOption).map(math.max(1, _)).getOrElse(1),
+      param(req, "count").flatMap(_.toIntOption).map(n => math.max(0, math.min(n, 1000))).getOrElse(100)
     )
 
   private def listUsers(req: Request[IO]): IO[Response[IO]] =
-    q(req, "filter").traverse(ScimFilter.parse) match {
+    param(req, "filter").traverse(ScimFilter.parse) match {
       case Left(e) => scimErr(ErrorCode.ScimFilterInvalid, e, Some("invalidFilter"))
       case Right(filter) =>
         val (start, count) = paging(req)

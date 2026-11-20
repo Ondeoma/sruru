@@ -9,57 +9,35 @@ import sbirds.http.Errors
 import cats.effect.*
 import cats.syntax.all.*
 import io.circe.{ACursor, Json}
-import io.circe.parser.parse
 import io.circe.syntax.*
 import org.http4s.*
 import org.typelevel.ci.CIString
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.{`WWW-Authenticate`, Allow, Authorization}
+import org.http4s.headers.Authorization
+import sbirds.mcp.{McpCaller, McpServer, McpTool}
+import sbirds.mcp.McpSchema.*
 
 /**
  * MCP（Model Context Protocol）のサーバー. POST /mcp に JSON-RPC を送る（Streamable HTTP. 応答は JSON）.
  * 認証は API トークン（Bearer）だけ. 各ツールは REST API をそのトークンで内部から呼ぶので、権限・スコープ・監査ログは REST API と同じ.
  */
-final class McpRoutes(api: HttpRoutes[IO], auth: SessionAuth, cfg: ApiConfig) extends Http4sDsl[IO] {
+final class McpRoutes(api: HttpRoutes[IO], auth: SessionAuth, cfg: ApiConfig) {
 
-  val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ POST -> Root / "mcp" => postMcp(req)
-    case (GET | DELETE) -> Root / "mcp" => getMcp()
-  }
-
-  private def postMcp(req: Request[IO]): IO[Response[IO]] =
-    req.headers.get[Authorization] match {
-      case Some(authz @ Authorization(Credentials.Token(AuthScheme.Bearer, _))) =>
-        auth.principal(inner(req, authz, Method.GET, Uri.unsafeFromString("/mcp"))).flatMap {
-          case Some(p) if p.via.isInstanceOf[Via.Token] =>
-            val call = Caller(req, authz)
-            req.as[Json].attempt.flatMap {
-              case Left(_) => BadRequest(rpcFail(Json.Null, -32700, "parse error"))
-              case Right(j) =>
-                j.asArray match {
-                  case Some(batch) => batch.toList.traverse(handle(call, p, _)).map(_.flatten).flatMap(rs =>
-                      if rs.isEmpty then Accepted() else Ok(rs.asJson)
-                    )
-                  case None => handle(call, p, j).flatMap(_.fold(Accepted())(Ok(_)))
-                }
-            }
-          case _ => unauthorized
-        }
-      case _ => unauthorized
-    }
-
-  private def getMcp(): IO[Response[IO]] =
-    MethodNotAllowed(Allow(Method.POST))
-
-  private val Versions = List("2025-06-18", "2025-03-26", "2024-11-05")
+  // POST /mcp（JSON-RPC）と GET・DELETE /mcp（405）は sbirds.mcp.McpServer
+  lazy val routes: HttpRoutes[IO] = McpServer.routes(host)
 
   // ------------------------------------------------------------------ REST API の内部呼び出し
 
-  /** 内部の要求（外側の要求の接続元・X-Forwarded-For・User-Agent を引き継ぎ、IP 制限と監査ログを正しくする）. */
+  /** 内部の要求に引き継がないヘッダー（認証は Bearer を付け直す. 本文は内部の要求のもの）. */
+  private val NotForwarded =
+    Set("Authorization", "Cookie", "Content-Type", "Content-Length", "Transfer-Encoding", "Host").map(CIString(_))
+
+  /**
+   * 内部の要求（外側の要求の接続元と、X-Forwarded-For・利用者のアドレスのヘッダー（ポリシーで決めた名前. CloudFront-Viewer-Address など）・
+   * User-Agent を引き継ぎ、IP 制限と監査ログを外側の要求と同じにする）.
+   */
   private def inner(outer: Request[IO], authz: Authorization, method: Method, uri: Uri): Request[IO] = {
-    val fwd =
-      outer.headers.headers.filter(h => h.name == CIString("X-Forwarded-For") || h.name == CIString("User-Agent"))
+    val fwd = outer.headers.headers.filterNot(h => NotForwarded(h.name))
     Request[IO](
       method,
       uri,
@@ -67,65 +45,30 @@ final class McpRoutes(api: HttpRoutes[IO], auth: SessionAuth, cfg: ApiConfig) ex
     ).putHeaders(authz).transformHeaders(_ ++ Headers(fwd))
   }
 
+  /** REST API の内部呼び出し（外側の要求の接続元などを引き継ぐ. 本文のない成功は "OK" にする）. */
   private final class Caller(outer: Request[IO], authz: Authorization) {
-    def apply(method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, Json]] = {
-      val req0 = inner(outer, authz, method, uri)
-      val req = body.fold(req0)(req0.withEntity(_))
-      api.run(req).value.flatMap {
-        case None => IO.pure(Left("404 見つかりません"))
-        case Some(r) =>
-          r.bodyText.compile.string.map { s =>
-            val j = if s.isEmpty then Json.Null else parse(s).getOrElse(Json.fromString(s))
-            if r.status.isSuccess then Right(if j.isNull then Json.fromString("OK") else j)
-            else Left(s"${r.status.code} ${j.hcursor.get[String]("error").getOrElse(r.status.reason)}")
-          }
+    private val call = new McpCaller(
+      api,
+      authz,
+      build = (method, uri, body) => {
+        val req = inner(outer, authz, method, uri)
+        body.fold(req)(req.withEntity(_))
       }
-    }
+    )
+    def apply(method: Method, uri: Uri, body: Option[Json] = None): IO[Either[String, Json]] =
+      call(method, uri, body).map(_.map(j => if j.isNull then Json.fromString("OK") else j))
   }
 
-  private def path(segments: String*): Uri =
-    Uri(path = Uri.Path(segments.toVector.map(Uri.Path.Segment(_)), absolute = true))
+  private def path(segments: String*): Uri = McpCaller.path(segments*)
 
   // ------------------------------------------------------------------ ツール
 
-  private type Result = IO[Either[String, String]]
+  private type Result = McpTool.Result
+  private type Tool = McpTool[Caller]
+  private def Tool(name: String, description: String, schema: Json, readOnly: Boolean, destructive: Boolean = false)(
+    run: (Caller, ACursor) => Result): Tool = McpTool(name, description, schema, readOnly, destructive)(run)
 
-  private final case class Tool(name: String,
-                                description: String,
-                                schema: Json,
-                                readOnly: Boolean,
-                                destructive: Boolean = false)(val run: (Caller, ACursor) => Result) {
-    def json: Json = Json.obj(
-      "name" -> name.asJson,
-      "description" -> description.asJson,
-      "inputSchema" -> schema,
-      "annotations" -> Json.obj(
-        "readOnlyHint" -> readOnly.asJson,
-        "destructiveHint" -> destructive.asJson,
-        "openWorldHint" -> false.asJson
-      )
-    )
-  }
-
-  private def schema(required: List[String], props: (String, Json)*): Json =
-    Json.obj("type" -> "object".asJson, "properties" -> Json.obj(props*), "required" -> required.asJson)
-  private def str(d: String): Json = Json.obj("type" -> "string".asJson, "description" -> d.asJson)
-  private def int(d: String): Json = Json.obj("type" -> "integer".asJson, "description" -> d.asJson)
-  private def bool(d: String): Json = Json.obj("type" -> "boolean".asJson, "description" -> d.asJson)
-  private def strs(d: String): Json =
-    Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson), "description" -> d.asJson)
-  private def obj(d: String): Json = Json.obj("type" -> "object".asJson, "description" -> d.asJson)
-
-  private def need(a: ACursor, k: String): Either[String, String] =
-    a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty).toRight(s"$k を指定してください")
   private def opt(a: ACursor, k: String): Option[String] = a.get[String](k).toOption.map(_.trim).filter(_.nonEmpty)
-
-  extension [A](e: Either[String, A]) {
-    private def withArgs(f: A => Result): Result = e.fold(err => IO.pure(Left(err)), f)
-  }
-  extension (r: IO[Either[String, Json]]) {
-    private def asText: Result = r.map(_.map(_.spaces2))
-  }
 
   /** ユーザー名・メールアドレス・ID からユーザーの ID を引く. */
   private def userId(call: Caller, who: String): IO[Either[String, String]] =
@@ -458,65 +401,30 @@ final class McpRoutes(api: HttpRoutes[IO], auth: SessionAuth, cfg: ApiConfig) ex
     }
   )
 
-  private val byName = tools.map(t => t.name -> t).toMap
+  // ------------------------------------------------------------------ 枠（sbirds.mcp.McpServer）に渡す部分
 
-  // ------------------------------------------------------------------ JSON-RPC
-
-  private def ok(id: Json, result: Json): Json = Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "result" -> result)
-  private def rpcFail(id: Json, code: Int, msg: String): Json =
-    Json.obj("jsonrpc" -> "2.0".asJson, "id" -> id, "error" -> Json.obj("code" -> code.asJson, "message" -> msg.asJson))
-  private def toolResult(r: Either[String, String]): Json =
-    Json.obj(
-      "content" -> Json.arr(Json.obj("type" -> "text".asJson, "text" -> r.merge.asJson)),
-      "isError" -> r.isLeft.asJson
+  private lazy val host = new McpServer.Host[Principal, Caller] {
+    val settings = McpServer.Settings(
+      "sruru",
+      toolFailed = ErrorCode.McpToolFailed,
+      version = cfg.version,
+      maxBatch = 50,
+      batchTooLarge = n => s"バッチは${n}件までです",
+      readOnlyDenied = "参照専用のトークンでは変更できません",
+      hideDenied = false
     )
+    val tools = McpRoutes.this.tools
 
-  private def handle(call: Caller, p: Principal, msg: Json): IO[Option[Json]] = {
-    val c = msg.hcursor
-    val params = c.downField("params")
-    c.downField("id").focus match {
-      case None => IO.pure(None)
-      case Some(id) =>
-        c.get[String]("method").getOrElse("") match {
-          case "initialize" =>
-            val asked = params.get[String]("protocolVersion").toOption
-            IO.pure(Some(ok(
-              id,
-              Json.obj(
-                "protocolVersion" -> asked.filter(Versions.contains).getOrElse(Versions.head).asJson,
-                "capabilities" -> Json.obj("tools" -> Json.obj("listChanged" -> false.asJson)),
-                "serverInfo" -> Json.obj("name" -> "sruru".asJson, "version" -> cfg.version.asJson),
-                "instructions" ->
-                  ("sruru（認証基盤・IdP）のユーザー・グループ・アプリケーション・監査ログを扱うツールです。" +
-                    "ユーザーはユーザー名・メールアドレス・ID のどれでも指定できます。管理の操作には admin スコープのトークンが必要です。" +
-                    "専用のツールがない操作は list_api_endpoints で REST API を調べ、call_api で行えます。").asJson
-              )
-            )))
-          case "ping" => IO.pure(Some(ok(id, Json.obj())))
-          case "tools/list" => IO.pure(Some(ok(id, Json.obj("tools" -> tools.map(_.json).asJson))))
-          case "tools/call" =>
-            val name = params.get[String]("name").getOrElse("")
-            byName.get(name) match {
-              case None => IO.pure(Some(rpcFail(id, -32602, s"unknown tool: $name")))
-              case Some(t) if !p.canWrite && !t.readOnly =>
-                IO.pure(Some(ok(id, toolResult(Left("参照専用のトークンでは変更できません")))))
-              case Some(t) =>
-                val args = params.downField("arguments").focus.filter(_.isObject).getOrElse(Json.obj()).hcursor
-                t.run(call, args).handleError(e => Left(s"内部エラー: ${e.getMessage}")).map(r =>
-                  Some(ok(id, toolResult(r)))
-                )
-            }
-          case "resources/list" => IO.pure(Some(ok(id, Json.obj("resources" -> Json.arr()))))
-          case "prompts/list" => IO.pure(Some(ok(id, Json.obj("prompts" -> Json.arr()))))
-          case other => IO.pure(Some(rpcFail(id, -32601, s"method not found: $other")))
-        }
-    }
+    /** API トークンの持ち主（画面のセッションは使えない）. IP 制限を外側の要求と同じにするため、転送のヘッダーを引き継いで確かめる. */
+    def session(req: Request[IO], authz: Authorization) =
+      auth.principal(inner(req, authz, Method.GET, Uri.unsafeFromString("/mcp")))
+        .map(_.filter(_.via.isInstanceOf[Via.Token]))
+    def unauthorized = Errors.respond(AppError(ErrorCode.McpTokenRequired))
+    def context(req: Request[IO], authz: Authorization, p: Principal) = new Caller(req, authz)
+    def canWrite(p: Principal) = p.canWrite
+    def instructions(p: Principal) =
+      "sruru（認証基盤・IdP）のユーザー・グループ・アプリケーション・監査ログを扱うツールです。" +
+        "ユーザーはユーザー名・メールアドレス・ID のどれでも指定できます。管理の操作には admin スコープのトークンが必要です。" +
+        "専用のツールがない操作は list_api_endpoints で REST API を調べ、call_api で行えます。"
   }
-
-  private def unauthorized: IO[Response[IO]] =
-    Errors.respond(AppError(ErrorCode.McpTokenRequired)).map(_.putHeaders(`WWW-Authenticate`(Challenge(
-      "Bearer",
-      "sruru"
-    ))))
-
 }

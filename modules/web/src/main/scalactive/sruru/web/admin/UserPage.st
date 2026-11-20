@@ -169,13 +169,13 @@ def isMe(props: Props): Boolean = Store.myId.exists(_.toString == props.id)
           <label class="field"><span>表示名</span><input type="text" v-model="s.name"></label>
           <label class="field"><span>姓</span><input type="text" v-model="s.family"></label>
           <label class="field"><span>名</span><input type="text" v-model="s.givenN"></label>
-          <label class="field"><span>メールアドレス</span><input type="email" v-model="s.email"></label>
+          <label class="field"><span>メールアドレス</span><input type="email" v-model="s.email" @input="s.emailVerified := true"></label>
           <label class="field"><span>電話番号</span><input type="tel" v-model="s.phone"></label>
           <label class="field"><span>言語</span><input type="text" v-model="s.locale" placeholder="ja"></label>
           <label class="field"><span>タイムゾーン</span><input type="text" v-model="s.zone" placeholder="Asia/Tokyo"></label>
         </div>
         <div class="grid2">
-          <label class="check"><input type="checkbox" v-model="s.emailVerified"><span>メールアドレスは確認済み</span></label>
+          <label class="check"><input type="checkbox" v-model="s.emailVerified"><span>メールアドレスは確認済み（アドレスを書き換えると付きます。本人に確かめさせるときは外してください）<span v-if="d.user.email.isDefined && !d.user.emailVerified" class="hint">各サービスに渡すのは確認済みのアドレスだけです（いま渡している値: {{ d.user.verifiedEmail.getOrElse("なし") }}）</span></span></label>
           <label class="check"><input type="checkbox" v-model="s.isAdmin" :disabled="isMe(props)"><span>管理者<span v-if="d.user.effectiveAdmin && !d.user.isAdmin" class="hint">管理者のグループに入っているため管理者です</span></span></label>
           <label class="check"><input type="checkbox" v-model="s.disabled" :disabled="isMe(props)"><span>無効にする（ログインできなくする）</span></label>
           <label class="check"><input type="checkbox" v-model="s.isService"><span>サービスアカウント</span></label>

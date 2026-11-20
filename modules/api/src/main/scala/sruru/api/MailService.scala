@@ -1,5 +1,6 @@
 package sruru.api
 
+import sbirds.db.*
 import cats.effect.*
 import sruru.core.*
 import sruru.db.*

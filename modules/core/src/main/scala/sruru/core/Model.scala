@@ -10,6 +10,8 @@ final case class User(id: UUID,
                       username: String,
                       email: Option[String],
                       emailVerified: Boolean,
+                      /** 最後に確認済みだったメールアドレス. 各サービスに渡すのはこの値だけ（email は未確認のことがある） */
+                      verifiedEmail: Option[String],
                       name: String,
                       givenName: Option[String],
                       familyName: Option[String],
@@ -34,6 +36,27 @@ final case class User(id: UUID,
                       lastLoginAt: Option[Instant]) {
   def locked(now: Instant): Boolean = lockedUntil.exists(_.isAfter(now))
   def hasAvatar: Boolean = avatarUpdatedAt.isDefined
+
+  /**
+   * メールアドレスを設定する. 確認済みの値（verifiedEmail）の決まり:
+   *  - 確認済みとして設定する → 確認済みの値を入れ替える
+   *  - アドレスを消す → 確認済みの値も消す
+   *  - 未確認として、確認済みの値と同じアドレスを設定する（確認済みの取り消し） → 確認済みの値を消す
+   *  - 未確認として、別のアドレスを設定する → 以前の確認済みの値を残す（確認が済むまで、各サービスには以前の値を渡す）
+   */
+  def withEmail(next: Option[String], verified: Boolean): User =
+    copy(email = next, emailVerified = verified).normalizedEmail
+
+  /** email・emailVerified に合わせて verifiedEmail を整える（保存の前に必ず通す）. */
+  def normalizedEmail: User = {
+    val same = (a: String, b: String) => a.trim.equalsIgnoreCase(b.trim)
+    val v = email match {
+      case None => None
+      case Some(e) if emailVerified => Some(e)
+      case Some(e) => verifiedEmail.filterNot(same(_, e))
+    }
+    copy(verifiedEmail = v)
+  }
 }
 
 final case class Group(
@@ -159,8 +182,9 @@ object Context {
     Json.obj(
       "id" -> u.id.toString.asJson,
       "username" -> u.username.asJson,
-      "email" -> u.email.asJson,
-      "email_verified" -> u.emailVerified.asJson,
+      // 式・条件に渡すメールアドレスは確認済みの値だけ（未確認のアドレスは本人が自由に書けるので、他人を名乗れてしまう）
+      "email" -> u.verifiedEmail.asJson,
+      "email_verified" -> u.verifiedEmail.isDefined.asJson,
       "name" -> u.name.asJson,
       "given_name" -> u.givenName.asJson,
       "family_name" -> u.familyName.asJson,

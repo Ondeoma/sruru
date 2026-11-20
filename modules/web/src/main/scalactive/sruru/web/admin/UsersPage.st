@@ -40,7 +40,8 @@ def openCreate(s: State): Unit = {
 
 def create(s: State): Unit = {
   val pw = if (s.pwMode.v == "input") Fmt.opt(s.password.v) else None
-  val req = UserReq(s.username.v.trim, s.name.v.trim, Fmt.opt(s.email.v), isAdmin = s.isAdmin.v, isService = s.isService.v,
+  // 管理者が入力したメールアドレスは確認済みとして扱う（各サービスに渡すのは確認済みのアドレスだけ. 外すのはユーザーの画面で）
+  val req = UserReq(s.username.v.trim, s.name.v.trim, Fmt.opt(s.email.v), emailVerified = Fmt.opt(s.email.v).isDefined, isAdmin = s.isAdmin.v, isService = s.isService.v,
     mustChangePassword = s.mustChange.v && !s.isService.v, password = pw)
   val f = Api.post[UserDto]("/api/admin/users", Api.json(req)).flatMap { u =>
     if (s.pwMode.v == "generate")

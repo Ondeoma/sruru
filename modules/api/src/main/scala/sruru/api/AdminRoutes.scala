@@ -170,7 +170,7 @@ final class AdminRoutes(dir: Directory,
       body[SetPasswordReq](req) { r =>
         withUser(id) { u =>
           if r.sendResetMail then
-            ctx(req).flatMap(c => login.forgot(c, ForgotReq(u.username))) *>
+            ctx(req).flatMap(c => login.forgot(c, ForgotReq(u.username), byAdmin = true)) *>
               audited(audit, req, p, "user.password.reset_mail", audit.userTarget(u)) *>
               Ok(GeneratedPasswordDto(None))
           else {
@@ -798,7 +798,7 @@ final class AdminRoutes(dir: Directory,
 
   private def postAdminKeysRotate(req: Request[IO]): IO[Response[IO]] =
     admin(req) { p =>
-      val alg = q(req, "alg").filter(Set("RS256", "ES256")).getOrElse("RS256")
+      val alg = param(req, "alg").filter(Set("RS256", "ES256")).getOrElse("RS256")
       keys.rotate(alg).flatMap(k =>
         audited(audit, req, p, "key.rotate", Some(("key", k.kid, alg))) *>
           Ok(KeyDto(k.kid, k.alg, k.active, k.createdAt, k.retiredAt))
@@ -894,10 +894,10 @@ final class AdminRoutes(dir: Directory,
 
   private def listUsers(req: Request[IO]): IO[UserListDto] = {
     val query = UserQuery(
-      q(req, "q"),
-      q(req, "status"),
-      q(req, "groupId").flatMap(uuidParam),
-      q(req, "source"),
+      param(req, "q"),
+      param(req, "status"),
+      param(req, "groupId").flatMap(uuidParam),
+      param(req, "source"),
       qInt(req, "limit", 50, 500),
       qInt(req, "offset", 0, Int.MaxValue)
     )
@@ -1498,14 +1498,14 @@ final class AdminRoutes(dir: Directory,
       java.time.ZoneId.of("Asia/Tokyo")
     ).toInstant).toOption)
     AuditQuery(
-      q(req, "q"),
-      q(req, "action"),
-      q(req, "actorId").flatMap(uuidParam),
-      q(req, "targetId"),
-      q(req, "from").flatMap(instant),
-      q(req, "to").flatMap(instant),
-      q(req, "success").map(_ == "true"),
-      q(req, "via"),
+      param(req, "q"),
+      param(req, "action"),
+      param(req, "actorId").flatMap(uuidParam),
+      param(req, "targetId"),
+      param(req, "from").flatMap(instant),
+      param(req, "to").flatMap(instant),
+      param(req, "success").map(_ == "true"),
+      param(req, "via"),
       qInt(req, "limit", 100, 1000),
       qInt(req, "offset", 0, Int.MaxValue)
     )

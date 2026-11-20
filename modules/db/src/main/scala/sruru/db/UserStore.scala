@@ -1,5 +1,6 @@
 package sruru.db
 
+import sbirds.db.*
 import sbirds.shared.AppError
 
 import cats.effect.*
@@ -42,7 +43,7 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
   import Codecs.given
 
   private val cols =
-    fr"""u.id, u.username, u.email, u.email_verified, u.name, u.given_name, u.family_name, u.password_hash,
+    fr"""u.id, u.username, u.email, u.email_verified, u.verified_email, u.name, u.given_name, u.family_name, u.password_hash,
     u.password_changed_at, u.must_change_password, u.is_admin, u.is_service, u.disabled, u.locked_until, u.failed_attempts,
     u.attributes, u.avatar_updated_at, u.picture_url, u.source, u.external_id, u.locale, u.zoneinfo, u.phone_number,
     u.created_at, u.updated_at, u.last_login_at"""
@@ -58,6 +59,10 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
   def byUsername(username: String): IO[Option[User]] = tx(select(fr"where lower(u.username) = lower($username)").option)
 
   def byEmail(email: String): IO[List[User]] = tx(select(fr"where lower(u.email) = lower($email)").to[List])
+
+  /** 確認済みのアドレスがこの値のユーザー（各サービスにこのアドレスで知られている人）. */
+  def byVerifiedEmail(email: String): IO[List[User]] =
+    tx(select(fr"where lower(u.verified_email) = lower($email)").to[List])
 
   /** ログインの名前（ユーザー名、またはメールアドレスで1人に決まるとき）. */
   def byLoginName(s: String): IO[Option[User]] =
@@ -105,13 +110,14 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
   def create(n: NewUser): IO[Either[AppError, User]] = {
     val id = UUID.randomUUID()
     val now = Instant.now()
+    val verified = n.email.filter(_ => n.emailVerified)
     tx(
       sql"select exists(select 1 from users where lower(username) = lower(${n.username}))".query[Boolean].unique.flatMap {
         case true => fail(AppError(ErrorCode.UsernameTaken, s"ユーザー名「${n.username}」は使われています"))
         case false =>
-          sql"""insert into users (id, username, email, email_verified, name, given_name, family_name, password_hash, password_changed_at,
+          sql"""insert into users (id, username, email, email_verified, verified_email, name, given_name, family_name, password_hash, password_changed_at,
                   must_change_password, is_admin, is_service, attributes, source, external_id, picture_url)
-                values ($id, ${n.username}, ${n.email}, ${n.emailVerified}, ${n.name}, ${n.givenName}, ${n.familyName}, ${n.passwordHash},
+                values ($id, ${n.username}, ${n.email}, ${n.emailVerified}, $verified, ${n.name}, ${n.givenName}, ${n.familyName}, ${n.passwordHash},
                   ${n.passwordHash.map(_ =>
               now
             )}, ${n.mustChangePassword}, ${n.isAdmin}, ${n.isService}, ${n.attributes}, ${n.source},
@@ -119,26 +125,44 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
             n.passwordHash.traverse_(h =>
               sql"insert into password_history (user_id, hash) values ($id, $h)".update.run
             ) *>
+            releaseVerifiedEmail(id, verified) *>
             findC(id).map(_.toRight(AppError(ErrorCode.UserNotFound)))
       }
     )
   }
 
   /** プロフィール・権限など、パスワード以外の項目を保存する. */
-  def save(u: User): IO[Either[AppError, User]] = tx(
-    sql"select exists(select 1 from users where lower(username) = lower(${u.username}) and id <> ${u.id})".query[
-      Boolean
-    ].unique.flatMap {
-      case true => fail(AppError(ErrorCode.UsernameTaken, s"ユーザー名「${u.username}」は使われています"))
-      case false =>
-        sql"""update users set username = ${u.username}, email = ${u.email}, email_verified = ${u.emailVerified}, name = ${u.name},
+  def save(user: User): IO[Either[AppError, User]] = {
+    // 確認済みの値は、email・emailVerified と食い違わないように必ず整えてから保存する
+    val u = user.normalizedEmail
+    tx(
+      sql"select exists(select 1 from users where lower(username) = lower(${u.username}) and id <> ${u.id})".query[
+        Boolean
+      ].unique.flatMap {
+        case true => fail(AppError(ErrorCode.UsernameTaken, s"ユーザー名「${u.username}」は使われています"))
+        case false =>
+          sql"""update users set username = ${u.username}, email = ${u.email}, email_verified = ${u.emailVerified},
+                verified_email = ${u.verifiedEmail}, name = ${u.name},
                 given_name = ${u.givenName}, family_name = ${u.familyName}, must_change_password = ${u.mustChangePassword},
                 is_admin = ${u.isAdmin}, disabled = ${u.disabled}, attributes = ${u.attributes}, picture_url = ${u.pictureUrl},
                 source = ${u.source}, external_id = ${u.externalId}, locale = ${u.locale}, zoneinfo = ${u.zoneinfo},
                 phone_number = ${u.phoneNumber}, updated_at = now()
-              where id = ${u.id}""".update.run *> findC(u.id).map(_.toRight(AppError(ErrorCode.UserNotFound)))
-    }
-  )
+              where id = ${u.id}""".update.run *>
+            releaseVerifiedEmail(u.id, u.verifiedEmail.filter(_ => u.emailVerified)) *>
+            findC(u.id).map(_.toRight(AppError(ErrorCode.UserNotFound)))
+      }
+    )
+  }
+
+  /**
+   * あるユーザーがアドレスを確認済みにしたら、そのアドレスを「以前の確認済みの値」として持っているだけの
+   * ほかのユーザー（別のアドレスに変えて確認待ちの人）からは外す. 手放したアドレスを名乗り続けさせない.
+   */
+  private def releaseVerifiedEmail(owner: UUID, verified: Option[String]): ConnectionIO[Unit] =
+    verified.traverse_(e =>
+      sql"""update users set verified_email = null, updated_at = now()
+            where id <> $owner and not email_verified and lower(verified_email) = lower($e)""".update.run
+    )
 
   def delete(id: UUID): IO[Boolean] = tx(sql"delete from users where id = $id".update.run.map(_ > 0))
 

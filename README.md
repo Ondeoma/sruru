@@ -107,6 +107,7 @@ java -cp 'dist/lib/*' sruru.app.Main
 | `NODE_ID` | ノード名（ログ・定期処理のリース） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | ログ・メトリクス・トレースの送り先（skorimako の URL と `Authorization=Bearer sko_…`（ingest のキー））。未設定なら送らない。そのほか OpenTelemetry の標準の `OTEL_*` が使える。パスワード・トークン・認可コード・SAML の応答・URL のクエリは送らない |
 | `LOG_FORMAT` / `LOG_LEVEL` | 標準出力のログの形（`text`（既定）・`json`）と水準（既定 `INFO`）。ログにはトレースの ID と操作したユーザーが付く |
+| `RATE_LIMIT_AUTH` | ログインの入口（`POST /api/login/…`・`POST /api/setup`）の、IP ごとの 1 分あたりの回数の上限。既定 60。0 なら制限しない。IP の決め方はポリシー（信じるプロキシ）に従う。各ノードのメモリで数える |
 | `SKORIMAKO_RUM_TOKEN` / `SKORIMAKO_RUM_URL` / `SKORIMAKO_RUM_SAMPLE_RATE` | 画面のブラウザの観測（skorimako の RUM）。ログインした後の画面だけで読み込む（ログイン・同意・パスワードの再設定の画面では読まない）。トークンは skorimako の管理の画面で登録したアプリのもの。URL を省略すると `SKORIMAKO_URL` |
 | `VAPID_SUBJECT` | プッシュ通知（PWA. パスワードの変更・アカウントのロックなどを本人に知らせる）の連絡先（`mailto:…` か `https://…`。省略すると `PUBLIC_URL`）。VAPID の鍵は初回の起動で作って DB に保存する |
 | `OAUTH_CLIENTS` | 兄弟のサービス（skakapo など）が利用者の権限で REST API・MCP を使うための OAuth のクライアント（JSON の配列 `[{"id","secret"（16文字以上）,"redirectUri","name","scopes":["read"]}]`）。渡せるのは `read` だけ（管理の操作はできない）。利用者は個人設定の「API トークン」で連携を確かめ・やめられる |

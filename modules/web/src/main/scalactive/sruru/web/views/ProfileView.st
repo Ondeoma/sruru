@@ -85,6 +85,8 @@ val zones = List("Asia/Tokyo", "UTC", "Asia/Seoul", "Asia/Shanghai", "Asia/Singa
           <span v-if="m.email.isDefined && !m.emailVerified" class="badge warn">未確認</span></span>
           <input type="email" v-model="s.email" autocomplete="email">
           <span v-if="m.email.isDefined && !m.emailVerified && mail.v" class="hint"><a href="#" @click.prevent="sendVerify()">確認のメールを送る</a></span>
+          <span v-if="m.email.isDefined && !m.emailVerified && m.verifiedEmail.isDefined" class="hint">確認が済むまで、各サービスには以前のアドレス（{{ m.verifiedEmail.getOrElse("") }}）を渡します</span>
+          <span v-if="m.email.isDefined && !m.emailVerified && !m.verifiedEmail.isDefined" class="hint">確認が済むまで、各サービスにはメールアドレスを渡しません</span>
         </label>
         <div class="grid3">
           <label class="field"><span>電話番号</span><input type="tel" v-model="s.phone" autocomplete="tel"></label>

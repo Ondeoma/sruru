@@ -1,5 +1,6 @@
 package sruru.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -79,16 +80,21 @@ final class SessionStore(xa: Transactor[IO]) extends TxStore(xa) {
     tx((fr"select" ++ loginCols ++
       fr"from logins where user_id = $userId and expires_at > $now order by last_seen_at desc").query[Login].to[List])
 
-  /** ログインを記録して、そのアカウントを使用中にする（同じアカウントなら認証の時刻と方法を更新）. */
+  /**
+   * ログインを記録して、そのアカウントを使用中にする（同じアカウントなら認証の時刻と方法を更新）.
+   * keepAuthTime は、本人確認をやり直していないとき（多要素認証の追加で、すでにある要素を確かめていない）に、前の認証の時刻を残す.
+   */
   def upsertLogin(bsId: UUID,
                   userId: UUID,
                   amr: List[String],
                   ip: String,
                   ua: Option[String],
-                  expiresAt: Instant): IO[Login] = tx(
+                  expiresAt: Instant,
+                  keepAuthTime: Boolean = false): IO[Login] = tx(
     (sql"""insert into logins (id, browser_session_id, user_id, auth_time, amr, ip, user_agent, expires_at)
            values (${UUID.randomUUID()}, $bsId, $userId, now(), ${amr.distinct.toArray}, $ip, $ua, $expiresAt)
-           on conflict (browser_session_id, user_id) do update set auth_time = now(), amr = excluded.amr, ip = excluded.ip,
+           on conflict (browser_session_id, user_id) do update set
+             auth_time = case when $keepAuthTime then logins.auth_time else now() end, amr = excluded.amr, ip = excluded.ip,
              user_agent = excluded.user_agent, expires_at = excluded.expires_at, last_seen_at = now()
            returning """ ++ loginCols).query[Login].unique <*
       sql"update browser_sessions set active_user = $userId, expires_at = greatest(expires_at, $expiresAt) where id = $bsId".update.run

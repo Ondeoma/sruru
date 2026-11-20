@@ -1,5 +1,6 @@
 package sruru.db
 
+import sbirds.db.*
 import cats.effect.*
 import cats.syntax.all.*
 import doobie.*
@@ -229,11 +230,7 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
     tx((fr"select" ++ keyCols ++ fr"from signing_keys order by created_at desc").query[StoredKey].to[List])
 
   /** 鍵を追加して、その alg の使用中の鍵にする. */
-  def addKey(k: StoredKey): IO[Unit] = tx(
-    sql"update signing_keys set active = false where alg = ${k.alg} and active".update.run *>
-      sql"""insert into signing_keys (kid, alg, private_enc, public_jwk, cert_pem, active)
-            values (${k.kid}, ${k.alg}, ${k.privateEnc}, ${k.publicJwk}, ${k.certPem}, true)""".update.run.void
-  )
+  def addKey(k: StoredKey): IO[Unit] = tx(addKeyC(k))
 
   /** 鍵を退役させる（JWKS から外れ、以後その鍵で署名したトークンは検証できない）. 使用中の鍵は退役できない. */
   def retireKey(kid: String): IO[Boolean] =

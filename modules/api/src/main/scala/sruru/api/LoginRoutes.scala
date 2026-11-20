@@ -1,5 +1,6 @@
 package sruru.api
 
+import sbirds.http.Csrf
 import sbirds.shared.AppError
 
 import cats.effect.*
@@ -9,7 +10,6 @@ import io.circe.syntax.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.{`Content-Type`, Location}
-import org.typelevel.ci.CIString
 import sruru.core.*
 import sruru.db.*
 import sruru.security.*
@@ -146,10 +146,10 @@ final class LoginRoutes(login: LoginService,
     csrf(req)(body[ResetReq](req)(r => ctx(req).flatMap(c => noContent(login.reset(c, r)))))
 
   private def getAuthCert(req: Request[IO]): IO[Response[IO]] =
-    q(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(certLogin(req, _))
+    param(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(certLogin(req, _))
 
   private def getAuthFedStart(req: Request[IO], slug: String): IO[Response[IO]] =
-    q(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(fedStart(req, slug, _))
+    param(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(fedStart(req, slug, _))
 
   private def getAuthFedCallback(req: Request[IO], slug: String): IO[Response[IO]] =
     fedCallback(req, slug)
@@ -255,10 +255,7 @@ final class LoginRoutes(login: LoginService,
   private def getBrandLogo(id: UUID): IO[Response[IO]] =
     settings.logo(id).flatMap {
       case Some((bytes, ct)) =>
-        image(bytes, ct).map(_.putHeaders(
-          "Cache-Control" -> "public, max-age=31536000, immutable",
-          "Content-Security-Policy" -> "default-src 'none'; style-src 'unsafe-inline'; sandbox"
-        ))
+        image(bytes, ct).map(_.putHeaders("Cache-Control" -> "public, max-age=31536000, immutable"))
       case None => NotFound()
     }
 
@@ -280,7 +277,7 @@ final class LoginRoutes(login: LoginService,
     )
 
   private def csrf(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
-    if req.headers.get(CIString("X-Sruru")).isEmpty then err(ErrorCode.CsrfHeaderMissing) else f
+    if !Csrf.fromOwnScreen(req, csrfPolicy) then err(ErrorCode.CsrfHeaderMissing) else f
 
   /** ログインが完了したら Cookie の値を新しくする. */
   private def rotated(bs: BrowserSession, r: Either[AppError, FlowDto])(res: Response[IO]): IO[Response[IO]] =
@@ -541,7 +538,7 @@ final class LoginRoutes(login: LoginService,
       .putHeaders(
         "Cache-Control" -> "public, max-age=300",
         "X-Content-Type-Options" -> "nosniff",
-        "Content-Security-Policy" -> "default-src 'none'",
+        "Content-Security-Policy" -> "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         "Cross-Origin-Resource-Policy" -> "cross-origin",
         "Access-Control-Allow-Origin" -> "*"
       ))

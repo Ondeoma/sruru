@@ -162,7 +162,9 @@ final case class MeDto(id: UUID,
                        locale: Option[String] = None,
                        zoneinfo: Option[String] = None,
                        phoneNumber: Option[String] = None,
-                       passwordRules: List[String] = Nil) derives ConfiguredCodec
+                       passwordRules: List[String] = Nil,
+                       /** 各サービスに渡しているメールアドレス（確認済みの値. email を変えて確認待ちの間は、以前のアドレス） */
+                       verifiedEmail: Option[String] = None) derives ConfiguredCodec
 
 final case class MeUpdateReq(name: String,
                              givenName: Option[String] = None,
@@ -259,7 +261,9 @@ final case class UserDto(id: UUID,
                          phoneNumber: Option[String] = None,
                          createdAt: Option[Timestamp] = None,
                          updatedAt: Option[Timestamp] = None,
-                         lastLoginAt: Option[Timestamp] = None) derives ConfiguredCodec
+                         lastLoginAt: Option[Timestamp] = None,
+                         /** 各サービスに渡しているメールアドレス（確認済みの値. email を変えて確認待ちの間は、以前のアドレス） */
+                         verifiedEmail: Option[String] = None) derives ConfiguredCodec
 // format: on
 
 final case class UserListDto(users: List[UserDto], total: Int) derives ConfiguredCodec

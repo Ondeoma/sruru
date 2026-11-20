@@ -1,5 +1,6 @@
 package sruru.api
 
+import sbirds.db.*
 import sbirds.shared.AppError
 
 import cats.effect.*

@@ -1,23 +1,23 @@
 package sruru.api
 
-import sbirds.http.Errors
+import sbirds.http.{Csrf, Errors}
 import sbirds.shared.AppError
 
 import cats.effect.*
 import io.circe.{Decoder, Encoder, Json}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.dsl.Http4sDsl
-import org.typelevel.ci.CIString
 import sruru.core.*
 
 import java.util.UUID
 
 /**
- * *Routes に共通の補助（エラー応答・認証・リクエスト本文）.
+ * *Routes に共通の補助（エラー応答・認証・リクエスト本文）. クエリ（param）・パスの UUID（UuidVar）は sbirds.http.RouteHelpers のもの.
  */
-trait RouteSupport extends Http4sDsl[IO] {
+trait RouteSupport extends sbirds.http.RouteHelpers {
   protected def auth: SessionAuth
+
+  protected def bodyInvalid: sbirds.shared.ErrorCode = ErrorCode.RequestBodyInvalid
 
   /** エラーの応答（コード付きでログに出る. キャッシュさせない）. detail を省くとコードの既定の文言. */
   protected def err(code: ErrorCode, detail: String | Null = null): IO[Response[IO]] =
@@ -38,7 +38,7 @@ trait RouteSupport extends Http4sDsl[IO] {
   protected def noContent(r: Res[Unit]): IO[Response[IO]] = respond(r)(_ => NoContent())
 
   /** 本文を読む（読めなければ 400）. */
-  protected def body[A: Decoder](req: Request[IO])(f: A => IO[Response[IO]]): IO[Response[IO]] =
+  override protected def body[A: Decoder](req: Request[IO])(f: A => IO[Response[IO]]): IO[Response[IO]] =
     req.as[Json].attempt.flatMap {
       case Left(e) if tooLarge(e) => err(ErrorCode.RequestTooLarge)
       case Left(_) => err(ErrorCode.JsonBodyUnreadable)
@@ -49,11 +49,15 @@ trait RouteSupport extends Http4sDsl[IO] {
         }
     }
 
-  /** 本文の大きさの上限（Main の EntityLimiter）を超えたか. */
+  /** 本文の大きさの上限（Main の BodyLimit）を超えたか. */
   private def tooLarge(e: Throwable): Boolean =
-    Iterator.iterate(e)(
-      _.getCause
-    ).takeWhile(_ != null).take(10).exists(_.isInstanceOf[org.http4s.server.middleware.EntityLimiter.EntityTooLarge])
+    Iterator.iterate(e)(_.getCause).takeWhile(_ != null).take(10).exists {
+      case a: AppError => a.code == ErrorCode.RequestTooLarge
+      case _ => false
+    }
+
+  /** CSRF の確認: 画面が付ける専用のヘッダー（X-Sruru）があること（GET・HEAD・OPTIONS は確かめない）. */
+  protected val csrfPolicy: Csrf.Policy = RouteSupport.CsrfPolicy
 
   protected def ctx(req: Request[IO]): IO[ReqCtx] = auth.reqCtx(req)
 
@@ -67,8 +71,7 @@ trait RouteSupport extends Http4sDsl[IO] {
           val write = !Set(Method.GET, Method.HEAD, Method.OPTIONS).contains(req.method)
           if write && !p.canWrite then err(ErrorCode.TokenNeedsWrite)
           else if !write && !p.canRead then err(ErrorCode.TokenNeedsRead)
-          else if write && p.via.isInstanceOf[Via.Web] && req.headers.get(CIString("X-Sruru")).isEmpty then
-            err(ErrorCode.CsrfHeaderMissing)
+          else if p.via.isInstanceOf[Via.Web] && Csrf.foreign(req, csrfPolicy) then err(ErrorCode.CsrfHeaderMissing)
           else f(p)
         }
     }
@@ -115,11 +118,11 @@ trait RouteSupport extends Http4sDsl[IO] {
 
   protected def uuidParam(s: String): Option[UUID] = scala.util.Try(UUID.fromString(s)).toOption
 
-  object UuidVar {
-    def unapply(s: String): Option[UUID] = scala.util.Try(UUID.fromString(s)).toOption
-  }
-
-  protected def q(req: Request[IO], name: String): Option[String] = req.params.get(name).map(_.trim).filter(_.nonEmpty)
+  /** 0 以上 max 以下の整数のパラメータ（RouteHelpers の intParam は下限が 1）. */
   protected def qInt(req: Request[IO], name: String, default: Int, max: Int): Int =
-    q(req, name).flatMap(_.toIntOption).map(n => math.max(0, math.min(n, max))).getOrElse(default)
+    param(req, name).flatMap(_.toIntOption).map(n => math.max(0, math.min(n, max))).getOrElse(default)
+}
+
+object RouteSupport {
+  val CsrfPolicy: Csrf.Policy = Csrf.Policy.headerOnly("X-Sruru", Csrf.SafeWithOptions)
 }

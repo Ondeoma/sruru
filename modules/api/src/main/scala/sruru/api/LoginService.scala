@@ -158,7 +158,8 @@ final class LoginService(dir: Directory,
 
   private def windowStart(p: PoliciesDto, now: Instant) = now.minusSeconds(p.lockout.ipWindowMinutes.toLong * 60)
 
-  private def throttled(c: ReqCtx): IO[Boolean] =
+  /** この IP からの失敗が上限に達しているか（ログインのほか、ログイン後のパスワードの確認でも使う）. */
+  def throttled(c: ReqCtx): IO[Boolean] =
     (policies.get, Time.now).flatMapN {
       (p, now) =>
         if p.lockout.ipMaxFailures <= 0 then IO.pure(false)
@@ -169,6 +170,22 @@ final class LoginService(dir: Directory,
 
   /** 失敗を記録する（IP ごとの回数・ユーザーのロック・監査ログ）. */
   private def failed(c: ReqCtx, u: Option[User], action: String, reason: String, extra: Json = Json.obj()): IO[Unit] =
+    countFailure(c, u) *>
+      audit.log(
+        c,
+        u,
+        "web",
+        action,
+        u.flatMap(audit.userTarget),
+        success = false,
+        detail = Json.obj("reason" -> reason.asJson).deepMerge(extra)
+      )
+
+  /**
+   * 失敗を数える（IP ごとの回数・ユーザーのロック. ロックしたときは監査ログに user.locked を残す）.
+   * ログイン後のパスワードの確認（MeRoutes）でも同じ数え方をする（失敗の監査ログは呼び出し側で残す）.
+   */
+  def countFailure(c: ReqCtx, u: Option[User]): IO[Unit] =
     for {
       p <- policies.get
       now <- Time.now
@@ -192,15 +209,6 @@ final class LoginService(dir: Directory,
             )
         }
       }
-      _ <- audit.log(
-        c,
-        u,
-        "web",
-        action,
-        u.flatMap(audit.userTarget),
-        success = false,
-        detail = Json.obj("reason" -> reason.asJson).deepMerge(extra)
-      )
     } yield ()
 
   private def precheck(c: ReqCtx): IO[Option[AppError]] =
@@ -254,7 +262,9 @@ final class LoginService(dir: Directory,
                       )
                         .as(Left(AppError(ErrorCode.AccountDisabled)))
                     case true =>
-                      val f2 = f.copy(userId = Some(x.id), amr = List(Amr.Pwd))
+                      // パスワードで本人確認をやり直したので、多要素認証の追加（stepUp）の扱いはやめる
+                      val f2 =
+                        f.copy(userId = Some(x.id), amr = List(Amr.Pwd), data = f.data.mapObject(_.remove("stepUp")))
                       // 失敗の回数はログインの完了（多要素認証の後）で戻す. ここで戻すと、2つ目の要素の総当たりでロックを回避できる
                       sessions.saveFlow(f2) *> advance(c, bs, f2, x).map(Right(_))
                   }
@@ -281,7 +291,7 @@ final class LoginService(dir: Directory,
       p <- dir.policyFor(u, m)
       hasTotp <- dir.hasTotp(u.id)
       appMfa <- appRequiresMfa(f)
-      stepUp = f.data.hcursor.get[Boolean]("stepUp").getOrElse(false)
+      stepUp = isStepUp(f)
       needPw = f.amr.contains(Amr.Pwd) && (u.mustChangePassword || dir.passwordExpired(u, p, now))
       required = dir.mfaRequired(u, m, p) || appMfa || stepUp
       needMfa = !Amr.isMulti(f.amr) && ((p.mfa.mode != "off" && (required || hasTotp)) || appMfa || stepUp)
@@ -293,6 +303,12 @@ final class LoginService(dir: Directory,
         if !IpRules.allowedBy(c.ip, p.ip) then
           sessions.deleteFlow(f.id).as(FlowDto(f.id, "error", message = Some("この IP アドレスからはログインできません")))
         else if needMfa && ms.exists(_ != "recovery") then save(f.copy(stage = "mfa"))
+        // 多要素認証の追加（stepUp）では、登録済みの要素（回復コードを含む）だけ受け付け、新しい要素は登録させない
+        // （盗んだ Cookie だけで自分の認証アプリを登録し、多要素認証を済ませたことにできないように.
+        //  登録は、パスワードでログインし直すか、直近のログインが要る設定の画面から行う）
+        else if needMfa && stepUp && ms.nonEmpty then save(f.copy(stage = "mfa"))
+        else if needMfa && stepUp then
+          sessions.deleteFlow(f.id).as(FlowDto(f.id, "error", message = Some(ErrorCode.MfaEnrollNotInStepUp.message)))
         else if needMfa && required && p.mfa.allowTotp then save(f.copy(stage = "enroll_mfa"))
         else if needMfa && required then
           IO.pure(FlowDto(f.id, "error", message = Some("多要素認証の方法が登録されていません。管理者に連絡してください")))
@@ -308,43 +324,65 @@ final class LoginService(dir: Directory,
       p <- dir.policyFor(u)
       now <- Time.now
       ls <- sessions.logins(bs.id, now)
-      // 同時にログインできるアカウントの数を超えるなら、いちばん古いものを外す
-      _ <- IO.whenA(!ls.exists(_.userId == u.id) && ls.size >= math.max(1, p.session.maxAccounts))(
-        ls.sortBy(_.lastSeenAt).headOption.traverse_(o =>
-          sessions.removeLogin(bs.id, o.userId).flatMap(_.traverse_(dir.endLogin(o.userId, _)))
-        )
-      )
-      l <- sessions.upsertLogin(
-        bs.id,
-        u.id,
-        f.amr,
-        c.ip,
-        c.userAgent,
-        now.plusSeconds(p.session.lifetimeHours.toLong * 3600)
-      )
-      _ <- dir.users.touchLogin(u.id)
-      _ <- dir.recomputeUser(u).handleErrorWith(e => sbirds.observe.Log.report(ErrorCode.DynamicGroupsFailed, "", e))
-      _ <- audit.log(
-        c,
-        Some(u),
-        "web",
-        "login.success",
-        audit.userTarget(u),
-        detail = Json.obj(
-          "amr" -> f.amr.distinct.asJson,
-          "requestId" -> f.authRequestId.map(_.toString).asJson
-        )
-      )
-      _ <- sessions.deleteFlow(f.id)
-    } yield FlowDto(
-      f.id,
-      "done",
-      redirect = Some(f.authRequestId.fold(f.returnTo.getOrElse("/"))(id => s"/auth/resume?req=$id"))
-    )
+      stepUp = isStepUp(f)
+      // 多要素認証の追加で、すでにある要素を確かめていない（すでに多要素だった）なら、
+      // 認証の時刻も期限も進めない（Cookie だけで「直近のログイン」・prompt=login・max_age を満たしたり、期限を延ばし続けたりできないように）
+      keep = stepUp && !f.data.hcursor.get[Boolean](Proved).getOrElse(false)
+      res <-
+        // 多要素認証の追加は、使用中のログインに要素を足すだけ. そのログインが（ログアウトなどで）もう無ければ、
+        // パスワードなしで新しいログインを作らせない
+        if stepUp && !ls.exists(_.userId == u.id) then
+          sessions.deleteFlow(f.id).as(FlowDto(f.id, "error", message = Some("ログインが終わっています。もう一度ログインしてください")))
+        else
+          for {
+            // 同時にログインできるアカウントの数を超えるなら、いちばん古いものを外す
+            _ <- IO.whenA(!ls.exists(_.userId == u.id) && ls.size >= math.max(1, p.session.maxAccounts))(
+              ls.sortBy(_.lastSeenAt).headOption.traverse_(o =>
+                sessions.removeLogin(bs.id, o.userId).flatMap(_.traverse_(dir.endLogin(o.userId, _)))
+              )
+            )
+            _ <- sessions.upsertLogin(
+              bs.id,
+              u.id,
+              f.amr,
+              c.ip,
+              c.userAgent,
+              ls.find(_.userId == u.id).filter(_ => keep).map(_.expiresAt)
+                .getOrElse(now.plusSeconds(p.session.lifetimeHours.toLong * 3600)),
+              keepAuthTime = keep
+            )
+            _ <- dir.users.touchLogin(u.id)
+            _ <-
+              dir.recomputeUser(u).handleErrorWith(e => sbirds.observe.Log.report(ErrorCode.DynamicGroupsFailed, "", e))
+            _ <- audit.log(
+              c,
+              Some(u),
+              "web",
+              "login.success",
+              audit.userTarget(u),
+              detail = Json.obj(
+                "amr" -> f.amr.distinct.asJson,
+                "requestId" -> f.authRequestId.map(_.toString).asJson
+              )
+            )
+            _ <- sessions.deleteFlow(f.id)
+          } yield FlowDto(
+            f.id,
+            "done",
+            redirect = Some(f.authRequestId.fold(f.returnTo.getOrElse("/"))(id => s"/auth/resume?req=$id"))
+          )
+    } yield res
 
   // ------------------------------------------------------------------ 2つ目の要素
 
   private def addMfa(f: LoginFlow, method: String): LoginFlow = f.copy(amr = (f.amr ++ List(method, Amr.Mfa)).distinct)
+
+  /** 多要素認証の追加（使用中のアカウントのまま、2つ目の要素だけ求める流れ）か. */
+  private def isStepUp(f: LoginFlow): Boolean = f.data.hcursor.get[Boolean]("stepUp").getOrElse(false)
+
+  /** この流れの中で、すでに登録してある要素（2つ目の要素・証明書・外部の IdP）を確かめた印（login_flows.data）. */
+  private val Proved = "proved"
+  private def proved(f: LoginFlow): LoginFlow = f.copy(data = f.data.deepMerge(Json.obj(Proved -> true.asJson)))
 
   def mfa(c: ReqCtx, bs: BrowserSession, req: MfaReq): Res[FlowDto] =
     sbirds.observe.Telemetry.span("login.mfa", "method" -> AuditMetrics.mfaMethod(req.method))(
@@ -367,7 +405,7 @@ final class LoginService(dir: Directory,
                           case None => IO.pure(None)
                         }
                       })
-                    case "email" if p.mfa.allowEmail =>
+                    case "email" if p.mfa.allowEmail && u.emailVerified =>
                       factors.emailToken(u.id, "login", now).flatMap {
                         case Some(t) if t.attempts < EmailMaxTry =>
                           // 回数の確認と加算は1つの SQL で行う（並列に送って上限を超えられないように）
@@ -386,7 +424,7 @@ final class LoginService(dir: Directory,
                   }
                   ok.flatMap {
                     case Some(m) =>
-                      val f2 = addMfa(f, m)
+                      val f2 = proved(addMfa(f, m))
                       audit.log(
                         c,
                         Some(u),
@@ -418,7 +456,9 @@ final class LoginService(dir: Directory,
         (dir.policyFor(u), Time.now).flatMapN {
           (p, now) =>
             val last = f.data.hcursor.get[Long]("emailAt").getOrElse(0L)
-            if f.stage != "mfa" || !p.mfa.allowEmail || u.email.isEmpty then Res.fail(ErrorCode.EmailCodeDisabled)
+            // 確認済みのアドレスだけ（methods と同じ条件. 未確認のアドレスへ2つ目の要素を送らない）
+            if f.stage != "mfa" || !p.mfa.allowEmail || u.email.isEmpty || !u.emailVerified then
+              Res.fail(ErrorCode.EmailCodeDisabled)
             else if now.getEpochSecond - last < 30 then Res.fail(AppError(ErrorCode.EmailCodeTooSoon))
             else {
               val code = Crypto.randomDigits(6)
@@ -452,6 +492,8 @@ final class LoginService(dir: Directory,
     withFlow(bs, flowId) { f =>
       withUser(f) { u =>
         if f.stage != "enroll_mfa" then Res.fail(ErrorCode.LoginStepInvalid)
+        // 多要素認証の追加（stepUp）の途中では登録させない（advance でもこの段階へは進めないが、ここでも断る）
+        else if isStepUp(f) then Res.fail(ErrorCode.MfaEnrollNotInStepUp)
         else
           dir.policyFor(u).flatMap { p =>
             val secret = Totp.newSecret()
@@ -470,6 +512,7 @@ final class LoginService(dir: Directory,
     withFlow(bs, req.flowId) { f =>
       withUser(f) { u =>
         factors.totp(req.deviceId).flatMap {
+          case _ if isStepUp(f) => Res.fail(ErrorCode.MfaEnrollNotInStepUp)
           case Some(d) if d.userId == u.id && !d.confirmed && f.stage == "enroll_mfa" =>
             Time.now.flatMap { now =>
               box.decrypt(d.secretEnc).flatMap(s => Totp.verify(s, req.code, now.getEpochSecond, 0)) match {
@@ -555,7 +598,7 @@ final class LoginService(dir: Directory,
             // 多要素認証の追加の途中なら、同じユーザーであること
             if f.userId.exists(_ != u.id) then Res.fail(ErrorCode.AuthenticatedAsOtherAccount)
             else {
-              val f2 = f.copy(userId = Some(u.id), amr = (f.amr ++ amr).distinct)
+              val f2 = proved(f.copy(userId = Some(u.id), amr = (f.amr ++ amr).distinct))
               audit.log(c, Some(u), "web", action, audit.userTarget(u), detail = detail) *> sessions.saveFlow(f2) *>
                 advance(c, bs, f2, u).map(Right(_))
             }
@@ -568,7 +611,12 @@ final class LoginService(dir: Directory,
 
   // ------------------------------------------------------------------ パスワードを忘れた
 
-  def forgot(c: ReqCtx, req: ForgotReq): IO[Unit] =
+  /**
+   * パスワードの再設定のメールを送る. 宛先は確認済みのアドレスだけ（本人が変えて確認待ちのアドレスには送らない.
+   * 未確認のアドレスは他人のものかもしれず、再設定のリンクを渡すとアカウントを取られる）.
+   * byAdmin: 管理者が画面から送るとき. 管理者が宛先を見て送るので、いま登録されているアドレスに送る.
+   */
+  def forgot(c: ReqCtx, req: ForgotReq, byAdmin: Boolean = false): IO[Unit] =
     // メールの送りすぎを防ぐ（同じ IP アドレスから15分に10回まで）
     (
       throttled(c),
@@ -578,14 +626,14 @@ final class LoginService(dir: Directory,
       (thr, p, n) =>
         IO.unlessA(thr || n > 10) {
           dir.users.byLoginName(req.username.trim).flatMap {
-            case Some(u) if !u.disabled && !u.isService && u.email.isDefined && u.source == "local" =>
+            case Some(u) if !u.disabled && !u.isService && resetAddress(u, byAdmin).isDefined && u.source == "local" =>
               val t = Crypto.randomToken()
               Time.now.flatMap(now =>
                 factors.createEmailToken(u.id, "reset", Crypto.sha256(t), now.plusSeconds(30 * 60))
               ) *>
                 dir.policyFor(u).flatMap(up =>
                   mail.send(
-                    u.email.get,
+                    resetAddress(u, byAdmin).get,
                     s"${up.branding.title} のパスワードの再設定",
                     s"${u.name} さん\n\n次のリンクからパスワードを再設定してください（30分間有効）。\n${cfg.publicUrl}/reset-password?token=$t\n\n" +
                       s"心当たりがない場合は、このメールを破棄してください。\n\nIP アドレス: ${c.ip}\n"
@@ -605,6 +653,9 @@ final class LoginService(dir: Directory,
           }
         }
     }
+
+  /** 再設定のメールの宛先. */
+  private def resetAddress(u: User, byAdmin: Boolean): Option[String] = if byAdmin then u.email else u.verifiedEmail
 
   def reset(c: ReqCtx, req: ResetReq): Res[Unit] =
     Time.now.flatMap(now => factors.emailTokenByHash("reset", Crypto.sha256(req.token.trim), now)).flatMap {

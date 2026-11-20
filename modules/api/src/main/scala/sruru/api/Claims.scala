@@ -11,8 +11,9 @@ import sruru.db.*
 object Claims {
   def sub(u: User, c: OidcClientConfig): String = c.subMode match {
     case "username" => u.username
-    // 確認済みのアドレスだけ（未確認のアドレスは本人が自由に書けるので、他人の sub を名乗れてしまう）
-    case "email" => u.email.filter(_ => u.emailVerified).getOrElse(u.id.toString)
+    // 確認済みのアドレスだけ（未確認のアドレスは本人が自由に書けるので、他人の sub を名乗れてしまう）.
+    // アドレスを変えて確認待ちの間は、以前の確認済みのアドレスのまま（sub が途中で変わらない）
+    case "email" => u.verifiedEmail.getOrElse(u.id.toString)
     case _ => u.id.toString
   }
 }
@@ -41,8 +42,13 @@ final class Claims(
             "updated_at" -> u.updatedAt.getEpochSecond.asJson
           )
         else Nil
+        // 渡すのは確認済みのアドレスだけ. 本人がアドレスを変えても、確認が済むまでは以前の確認済みのアドレスを渡す
+        // （未確認のアドレスは本人が自由に書けるので、メールアドレスで本人を結び付けるサービスで他人になりすませる）.
+        // 確認済みのアドレスがなければ email も email_verified も入れない
         val email =
-          if scopes("email") then List("email" -> u.email.asJson, "email_verified" -> u.emailVerified.asJson) else Nil
+          if scopes("email") then
+            u.verifiedEmail.toList.flatMap(e => List("email" -> e.asJson, "email_verified" -> true.asJson))
+          else Nil
         val phone = if scopes("phone") then List("phone_number" -> u.phoneNumber.asJson) else Nil
         val groups = if scopes("groups") || c.includeGroups then List("groups" -> m.names.asJson) else Nil
         val ctx = Context.of(Context.user(u, m, Some(pic)), Some(app))
