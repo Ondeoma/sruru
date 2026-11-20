@@ -156,7 +156,7 @@ def title(s: State, props: Props) = computed {
   if (isNew(props)) (if (s.protocol.v == "saml") "SAML のアプリケーションを追加" else if (s.protocol.v == "oidc") "OIDC のアプリケーションを追加" else "アプリケーションを追加")
   else s.app.v.map(_.name).getOrElse("")
 }
-val grantTypes = List("authorization_code" -> "認可コード（ブラウザでログイン）", "refresh_token" -> "リフレッシュトークン", "client_credentials" -> "クライアントクレデンシャル（サーバー同士）")
+val grantTypes = OAuthGrants.labels
 val nameIdFormats = List(
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" -> "メールアドレス",
   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" -> "永続的な ID（persistent）",
@@ -221,9 +221,10 @@ val nameIdFormats = List(
         <div class="grid2">
           <label class="field"><span>クライアント ID</span><input type="text" v-model="s.clientId" class="mono" placeholder="空なら自動で決めます"></label>
           <div class="field"><span>クライアントの種類</span>
-            <label class="check"><input type="checkbox" v-model="s.confidential"><span>シークレットを使う（サーバーで動くアプリ）<span class="hint">ブラウザ・スマートフォンだけで動くアプリは外して、PKCE を使います</span></span></label></div>
+            <label class="check"><input type="checkbox" v-model="s.confidential"><span>シークレットを使う（サーバーで動くアプリ）<span class="hint">ブラウザ・スマートフォン・デスクトップ・CLI だけで動くアプリは外して、PKCE を使います</span></span></label></div>
         </div>
-        <label class="field"><span>リダイレクト URI（1行に1つ）</span><textarea class="code" v-model="s.redirects" rows="3" placeholder="https://app.example.com/callback"></textarea></label>
+        <label class="field"><span>リダイレクト URI（1行に1つ）</span><textarea class="code" v-model="s.redirects" rows="3" placeholder="https://app.example.com/callback"></textarea>
+          <span class="hint">ネイティブアプリは、カスタムスキーム（com.example.app:/callback）か、ループバック（http://127.0.0.1/callback。シークレットを使わないアプリなら、ポートは実行のたびに違ってよい）を登録します。デバイスコードだけを使うアプリは空でかまいません</span></label>
         <label class="field"><span>ログアウト後のリダイレクト URI（1行に1つ・任意）</span><textarea class="code" v-model="s.postLogout" rows="2"></textarea></label>
         <div class="field"><span>使う方式（grant type）</span>
           <div class="chips"><label v-for="g in grantTypes" class="chip"><input type="checkbox" :value="g._1" v-model="s.grants"> {{ g._2 }}</label></div></div>

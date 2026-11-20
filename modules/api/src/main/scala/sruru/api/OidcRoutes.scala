@@ -8,25 +8,23 @@ import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
 import org.http4s.headers.{Authorization, Location}
+import sruru.shared.OAuthGrants
 import sruru.core.*
 import sruru.db.*
 import sruru.security.*
 
-import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
 
-/** OAuth 2.0 のエラー. */
-final case class OAuthError(error: String, description: String, status: Status = Status.BadRequest)
-
 /**
  * OpenID Connect プロバイダ・OAuth 2.0 認可サーバー.
- * 認可コード（PKCE）・リフレッシュトークン（ローテーションと再利用の検出）・クライアントクレデンシャル・
+ * 認可コード（PKCE）・リフレッシュトークン（ローテーションと再利用の検出）・クライアントクレデンシャル・デバイスコード（RFC 8628. 開始と確認は DeviceRoutes）・
  * UserInfo・イントロスペクション（RFC 7662）・失効（RFC 7009）・RP からのログアウト・バックチャネルのログアウト.
  */
-final class OidcRoutes(apps: AppStore,
+final class OidcRoutes(protected val apps: AppStore,
                        tokens: TokenStore,
+                       devices: DeviceStore,
                        sessions: SessionStore,
                        dir: Directory,
                        keys: KeyService,
@@ -35,7 +33,7 @@ final class OidcRoutes(apps: AppStore,
                        val auth: SessionAuth,
                        audit: AuditService,
                        http: Client[IO],
-                       cfg: ApiConfig) extends RouteSupport {
+                       protected val cfg: ApiConfig) extends RouteSupport with OAuthEndpoint {
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / ".well-known" / "openid-configuration" => getWellKnownOpenidConfiguration()
@@ -80,22 +78,9 @@ final class OidcRoutes(apps: AppStore,
   private def optionsOauth2(): IO[Response[IO]] =
     cors(IO.pure(Response[IO](Status.NoContent).putHeaders("Access-Control-Allow-Methods" -> "GET, POST")))
 
-  /** この要求のホスト名の issuer・ドメインを決めてから処理する（issuer はホスト名ごと）. */
-  private def here[A](f: Here ?=> IO[A]): IO[A] = cfg.here.flatMap(h => f(using h))
-  private def iss(using h: Here): String = h.url
   private val SupportedScopes = List("openid", "profile", "email", "phone", "groups", "offline_access")
 
   // ------------------------------------------------------------------ 補助
-
-  private def oauthErr(e: OAuthError): IO[Response[IO]] =
-    IO.pure(Response[IO](e.status).withEntity(Json.obj(
-      "error" -> e.error.asJson,
-      "error_description" -> e.description.asJson
-    ))
-      .putHeaders("Cache-Control" -> "no-store", "Pragma" -> "no-cache"))
-
-  private def json(j: Json): IO[Response[IO]] =
-    Ok(j).map(_.putHeaders("Cache-Control" -> "no-store", "Pragma" -> "no-cache"))
 
   /** クライアントへ結果を返す（query か form_post）. */
   private def toClient(redirectUri: String, mode: String, params: List[(String, String)]): IO[Response[IO]] =
@@ -108,8 +93,15 @@ final class OidcRoutes(apps: AppStore,
       ))
     }
 
-  /** POST するフォームの画面. question がなければすぐに送信し、あれば問いとボタンを見せる. */
-  private def formPage(action: String, params: List[(String, String)], question: Option[String]): IO[Response[IO]] = {
+  /**
+   * POST するフォームの画面. question がなければすぐに送信し、あれば問いとボタンを見せる.
+   * after は、送信した後にリダイレクトで戻す先（ログアウト後の URI）. CSP の form-action は送信後のリダイレクトにも効くので
+   * （Chromium）、送り先・戻り先がネイティブアプリのカスタムスキームのときは、そのスキームだけを足す（「*」は http・https などにしか合わない）.
+   */
+  private def formPage(action: String,
+                       params: List[(String, String)],
+                       question: Option[String],
+                       after: Option[String] = None): IO[Response[IO]] = {
     val nonce = Crypto.randomToken(12)
     def esc(s: String) = Html.escape(s)
     val inputs = params.map((k, v) => s"""<input type="hidden" name="${esc(k)}" value="${esc(v)}">""").mkString
@@ -125,44 +117,8 @@ final class OidcRoutes(apps: AppStore,
     val html =
       s"""<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
          |<title>sruru</title></head><body>$body</body></html>""".stripMargin
-    IO.pure(Html.response(html, s"default-src 'none'; script-src 'nonce-$nonce'; form-action *"))
-  }
-
-  private def params(req: Request[IO]): IO[Map[String, String]] =
-    // POST は本文だけを使う（クライアントのシークレットやトークンを URL に載せさせない）
-    if req.method == Method.POST then
-      req.as[UrlForm].map(f => f.values.collect { case (k, v) if v.nonEmpty => k -> v.toList.head })
-    else IO.pure(req.params)
-
-  /** クライアントの認証（client_secret_basic・client_secret_post・公開クライアント）. */
-  private def clientAuth(req: Request[IO],
-                         form: Map[String, String]): IO[Either[OAuthError, (Application, OidcClientConfig)]] = {
-    val basic = req.headers.get[Authorization].collect { case Authorization(BasicCredentials(u, p)) =>
-      (URLDecoder.decode(u, StandardCharsets.UTF_8), URLDecoder.decode(p, StandardCharsets.UTF_8))
-    }
-    val (id, secret) =
-      basic.map((u, p) => (Some(u), Some(p))).getOrElse((form.get("client_id"), form.get("client_secret")))
-    id match {
-      case None => IO.pure(Left(OAuthError("invalid_client", "client_id がありません", Status.Unauthorized)))
-      case Some(cid) =>
-        apps.byClientId(cid).map {
-          case Some((a, c)) if a.enabled =>
-            c.secretHash match {
-              case None => Either.cond(
-                  secret.isEmpty,
-                  (a, c),
-                  OAuthError("invalid_client", "公開クライアントにシークレットは不要です", Status.Unauthorized)
-                )
-              case Some(h) =>
-                Either.cond(
-                  secret.exists(s => Crypto.constantTimeEquals(Crypto.sha256(s), h)),
-                  (a, c),
-                  OAuthError("invalid_client", "クライアントの認証に失敗しました", Status.Unauthorized)
-                )
-            }
-          case _ => Left(OAuthError("invalid_client", "クライアントが見つかりません", Status.Unauthorized))
-        }
-    }
+    val schemes = (action :: after.toList).flatMap(OidcRoutes.customScheme).distinct.map(x => s" $x:").mkString
+    IO.pure(Html.response(html, s"default-src 'none'; script-src 'nonce-$nonce'; form-action *$schemes"))
   }
 
   // ------------------------------------------------------------------ メタデータ
@@ -176,9 +132,10 @@ final class OidcRoutes(apps: AppStore,
     "end_session_endpoint" -> s"$iss/oauth2/logout".asJson,
     "introspection_endpoint" -> s"$iss/oauth2/introspect".asJson,
     "revocation_endpoint" -> s"$iss/oauth2/revoke".asJson,
+    "device_authorization_endpoint" -> s"$iss/oauth2/device_authorization".asJson,
     "response_types_supported" -> List("code").asJson,
     "response_modes_supported" -> List("query", "form_post").asJson,
-    "grant_types_supported" -> List("authorization_code", "refresh_token", "client_credentials").asJson,
+    "grant_types_supported" -> OAuthGrants.all.asJson,
     "subject_types_supported" -> List("public").asJson,
     "id_token_signing_alg_values_supported" -> List("RS256", "ES256").asJson,
     "scopes_supported" -> SupportedScopes.asJson,
@@ -226,14 +183,16 @@ final class OidcRoutes(apps: AppStore,
             val redirect = p.get("redirect_uri").orElse(c.redirectUris match {
               case List(one) => Some(one); case _ => None
             })
-            redirect.filter(c.redirectUris.contains) match {
+            // 完全一致. 公開クライアント（ネイティブアプリ）のループバックだけ、ポートの違いを許す（RFC 8252 7.3）.
+            // 以後は実際に要求された値を使う（認可コードに結び付け、トークンの交換では完全一致で確かめる）
+            redirect.filter(RedirectUris.matches(c.redirectUris, _, c.isPublic)) match {
               case None => gate.errorPage("リダイレクト URI が登録されていません。アプリケーションの設定を確かめてください")
               case Some(ru) =>
                 val mode = p.get("response_mode").filter(_ == "form_post").getOrElse("query")
                 val state = p.get("state").toList.map("state" -> _)
                 def back(e: String, d: String) =
                   toClient(ru, mode, List("error" -> e, "error_description" -> d, "iss" -> iss) ++ state)
-                val requested = p.getOrElse("scope", "").split(' ').filter(_.nonEmpty).toList.distinct
+                val requested = scopeList(p.getOrElse("scope", ""))
                 val scopes = requested.filter(c.scopes.contains)
                 if !app.enabled then back("access_denied", "このアプリケーションは無効です")
                 else if !p.get("response_type").contains("code") then
@@ -461,10 +420,10 @@ final class OidcRoutes(apps: AppStore,
   private def loginAlive(loginId: Option[UUID], now: Instant): IO[Boolean] =
     loginId.fold(IO.pure(true))(id => sessions.login(id).map(_.exists(_.expiresAt.isAfter(now))))
 
-  /** 認可コードから発行するリフレッシュトークンの系列（コードの再利用のとき、その系列をまとめて失効させる）. */
+  /** 認可コード・device_code から発行するリフレッシュトークンの系列（コードの再利用のとき、その系列をまとめて失効させる）. */
   private def codeFamily(code: String): UUID = UUID.nameUUIDFromBytes(Crypto.sha256("sruru-code-family:" + code))
 
-  private val Grants = Set("authorization_code", "refresh_token", "client_credentials")
+  private val Grants = OAuthGrants.all.toSet
 
   /** トークンのエンドポイント. スパン・メトリクスには grant_type と結果だけを載せる（コード・トークン・クライアントシークレットは載せない）. */
   private def token(req: Request[IO])(using Here): IO[Response[IO]] =
@@ -494,7 +453,7 @@ final class OidcRoutes(apps: AppStore,
                     case None => oauthErr(OAuthError("invalid_grant", "認可コードが無効か期限切れです"))
                     case Some(Left(used)) =>
                       // 認可コードの再利用: そのコードで発行したトークン（系列ごと. offline_access も）を失効させる
-                      tokens.revokeCodeFamily(used, codeFamily(code)) *>
+                      tokens.revokeCodeFamily(used.appId, used.userId, used.loginId, codeFamily(code)) *>
                         oauthErr(OAuthError("invalid_grant", "認可コードはすでに使われています"))
                     case Some(Right(ac)) =>
                       // PKCE なしで出したコードに code_verifier が付いてきたら拒否する（PKCE のダウングレード）
@@ -587,9 +546,54 @@ final class OidcRoutes(apps: AppStore,
                     ))
                   )
                 }
+              case OAuthGrants.DeviceCode =>
+                f.get("device_code").fold(oauthErr(OAuthError("invalid_request", "device_code がありません")))(dc =>
+                  deviceToken(app, c, dc, now)
+                )
               case _ => oauthErr(OAuthError("unsupported_grant_type", s"$grant は使えません"))
             }
           }
+    }
+
+  /**
+   * デバイスフロー（RFC 8628 3.4・3.5）: 端末からのポーリング. 利用者が許可するまでは authorization_pending、
+   * 間隔より早ければ slow_down（以後の間隔を 5 秒延ばす）. 許可済みなら1回だけトークンを発行する.
+   */
+  private def deviceToken(app: Application, c: OidcClientConfig, deviceCode: String, now: Instant)(using
+    h: Here): IO[Response[IO]] =
+    devices.poll(Crypto.sha256(deviceCode), app.id, h.domain, now, DeviceFlow.SlowDownSeconds).flatMap {
+      case DevicePoll.Unknown => oauthErr(OAuthError("invalid_grant", "device_code が無効です"))
+      case DevicePoll.Expired => oauthErr(OAuthError("expired_token", "device_code の有効期限が切れました。最初からやり直してください"))
+      case DevicePoll.SlowDown(n) => oauthErr(OAuthError("slow_down", s"ポーリングが早すぎます。${n} 秒以上あけてください"))
+      case DevicePoll.Pending => oauthErr(OAuthError("authorization_pending", "利用者の許可を待っています"))
+      case DevicePoll.Denied => oauthErr(OAuthError("access_denied", "利用者が許可しませんでした"))
+      case DevicePoll.Reused(d) =>
+        // device_code の再利用: その device_code で発行したトークン（系列ごと. offline_access も）を失効させる
+        d.userId.traverse_(uid => tokens.revokeCodeFamily(d.appId, uid, d.loginId, codeFamily(deviceCode))) *>
+          oauthErr(OAuthError("invalid_grant", "device_code はすでに使われています"))
+      case DevicePoll.Approved(d) =>
+        d.userId.flatTraverse(dir.users.find).map(_.zip(d.authTime)).flatMap {
+          case Some((u, authTime)) =>
+            // 許可からポーリングまでの間に、無効化・グループからの除外・ログアウトがあれば発行しない
+            (stillAllowed(app, u), loginAlive(d.loginId, now)).tupled.flatMap {
+              case (true, true) =>
+                issue(
+                  OAuthGrants.DeviceCode,
+                  app,
+                  c,
+                  u,
+                  d.loginId,
+                  d.scopes,
+                  authTime,
+                  d.amr,
+                  None,
+                  Some(codeFamily(deviceCode)),
+                  now
+                ).flatMap(json)
+              case _ => oauthErr(OAuthError("access_denied", "このアプリケーションは使えなくなりました"))
+            }
+          case None => oauthErr(OAuthError("access_denied", "ユーザーが無効です"))
+        }
     }
 
   // ------------------------------------------------------------------ アクセストークンの検証
@@ -748,7 +752,12 @@ final class OidcRoutes(apps: AppStore,
           if byHint.isEmpty && active.isDefined && req.method == Method.GET then
             // ヒントで特定できない GET は確認してから（他のサイトに埋め込まれたリンクだけでログアウトさせない）.
             // 確認のフォームは同じサイトからの POST なので、SameSite=Lax の Cookie が付く
-            formPage("/oauth2/logout", (f - "id_token_hint" ++ cid.map("client_id" -> _)).toList, Some("ログアウトしますか？"))
+            formPage(
+              "/oauth2/logout",
+              (f - "id_token_hint" ++ cid.map("client_id" -> _)).toList,
+              Some("ログアウトしますか？"),
+              post
+            )
           else {
             val target = byHint.orElse(active.map(a => (a._1, a._3.id)))
             target.traverse_ {
@@ -774,17 +783,16 @@ final class OidcRoutes(apps: AppStore,
       } yield res
     }
 
-  // ------------------------------------------------------------------ ルート
-
-  private def cors(r: IO[Response[IO]]): IO[Response[IO]] =
-    r.map(_.putHeaders(
-      "Access-Control-Allow-Origin" -> "*",
-      "Access-Control-Allow-Headers" -> "Authorization, Content-Type"
-    ))
-
 }
 
 object OidcRoutes {
+
+  /** URI のスキームが http・https 以外（ネイティブアプリのカスタムスキーム）なら、そのスキーム. 登録のときの検査（AdminRoutes.validUrl）と同じ形だけ. */
+  def customScheme(uri: String): Option[String] =
+    Some(uri.takeWhile(_ != ':')).filter(x =>
+      uri.startsWith(x + ":") && x.matches("[a-z][a-z0-9+.-]*") && !Set("http", "https")(x)
+    )
+
   private def origin(u: String): Option[String] =
     scala.util.Try(java.net.URI.create(u)).toOption.filter(x =>
       x.getScheme != null && x.getHost != null && x.getUserInfo == null
@@ -793,7 +801,12 @@ object OidcRoutes {
         s"${x.getScheme.toLowerCase}://${x.getHost.toLowerCase}${if x.getPort == -1 then "" else s":${x.getPort}"}"
       )
 
-  /** ログアウト後に戻してよい URI: 登録したもの、または登録したリダイレクト URI と同じオリジンの URL（各サービスの「/」を個別に登録しなくてよいように）. */
+  /**
+   * ログアウト後に戻してよい URI: 登録したもの、または登録したリダイレクト URI と同じオリジンの URL（各サービスの「/」を個別に登録しなくてよいように）.
+   * 公開クライアントが登録したループバックの URI は、リダイレクト URI と同じくポートだけの違いを許す（RFC 8252 7.3. パスは完全一致）.
+   * 「同じオリジンなら任意のパス」のほうは、ループバックのポートの違いには広げない（ポートが違えば別のオリジン）.
+   */
   def allowedPostLogout(c: OidcClientConfig, u: String): Boolean =
-    c.postLogoutRedirectUris.contains(u) || origin(u).exists(o => c.redirectUris.flatMap(origin).contains(o))
+    RedirectUris.matches(c.postLogoutRedirectUris, u, c.isPublic) ||
+      origin(u).exists(o => c.redirectUris.flatMap(origin).contains(o))
 }

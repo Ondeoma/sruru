@@ -21,6 +21,7 @@ val routes: PathPatternRoutes = List(
   ("/login", _ => LoginView()),
   ("/choose", _ => ChooseView()),
   ("/consent", _ => ConsentView()),
+  ("/device", _ => DeviceView()),
   ("/forgot", _ => ForgotView()),
   ("/reset-password", _ => ResetPasswordView()),
   ("/setup", _ => SetupView()),

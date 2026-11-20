@@ -80,7 +80,20 @@ class DomainSpec extends CatsEffectSuite {
         val fed = new FederationService(fedStore, dir, audit, box, http, new JobLock(xa, "test"), cfg)
         val gate = new AuthGate(auth, apps, tokens, dir, policies, audit)
         val oidc =
-          new OidcRoutes(apps, tokens, sessions, dir, keys, new Claims(dir, apps), gate, auth, audit, http, cfg)
+          new OidcRoutes(
+            apps,
+            tokens,
+            new DeviceStore(xa),
+            sessions,
+            dir,
+            keys,
+            new Claims(dir, apps),
+            gate,
+            auth,
+            audit,
+            http,
+            cfg
+          )
         val loginR = new LoginRoutes(
           login,
           fed,

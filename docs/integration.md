@@ -36,6 +36,74 @@ ADMIN_GROUPS=myapp-admins                   # sruru のグループ名
 - 特定のグループだけに使わせるときは、アプリの「利用できるグループを制限する」をオンにして、グループを選びます。
 - 多要素認証を必須にするときは、アプリの「多要素認証を必須にする」をオンにします（済んでいなければログインの途中で求めます）。
 
+## ネイティブアプリ（iOS・Android・デスクトップ・CLI）
+
+ネイティブアプリは、シークレットを隠し持てないので**公開クライアント**（「シークレットを使う」をオフ）として登録し、
+**システムのブラウザ**で認可コード + PKCE（S256）のログインをします（RFC 8252）。ブラウザや入力の手段がない環境では、デバイスフロー（RFC 8628）を使います。
+
+- **アプリの中の WebView は使わないでください。** アプリが入力中のパスワードや Cookie を読めてしまい、ブラウザに残っているログイン（シングルサインオン）・
+  パスワードマネージャー・パスキーも使えません。必ずシステムのブラウザ（下の表の方式）で開きます。
+- 公開クライアントには PKCE が必須です（`code_challenge` のない要求は断ります）。`state` と、`openid` を使うなら `nonce` も付けてください。
+- ログアウトしても使い続けるアプリ（常駐するもの・CLI）は、スコープに `offline_access` を足します。足さなければ、リフレッシュトークンは
+  ブラウザのログインに結び付き、利用者がブラウザでログアウトしたとき・ログインの期限が切れたときに失効します。
+- リフレッシュトークンは使うたびに新しい値に替わります。古い値をもう一度使うと、系列ごと失効します（アプリは、常に最後に受け取った値を保存する）。
+- トークンは、OS の安全な保管場所（iOS・macOS のキーチェーン、Android の Keystore、Windows の資格情報マネージャー、Linux の Secret Service）に置きます。
+
+| 環境 | 開き方 | sruru に登録するリダイレクト URI | 方式（grant type） |
+|---|---|---|---|
+| iOS | `ASWebAuthenticationSession`（AppAuth-iOS など） | カスタムスキーム `com.example.app:/callback`、または Universal Links `https://app.example.com/callback` | 認可コード・リフレッシュトークン |
+| Android | Custom Tabs（AppAuth-Android など） | カスタムスキーム `com.example.app:/callback`、または App Links `https://app.example.com/callback` | 認可コード・リフレッシュトークン |
+| デスクトップ（Windows・macOS・Linux） | 既定のブラウザを開き、アプリは `127.0.0.1` の空いているポートで待ち受ける | `http://127.0.0.1/callback`（IPv6 なら `http://[::1]/callback`） | 認可コード・リフレッシュトークン |
+| CLI（ブラウザを開ける） | デスクトップと同じ | `http://127.0.0.1/callback` | 認可コード・リフレッシュトークン |
+| CLI（SSH の先・コンテナの中など、ブラウザを開けない）・テレビなどの端末 | 利用者が別の機器のブラウザで `https://id.example.com/device` を開く | 不要（空のまま登録できる） | デバイスコード・リフレッシュトークン |
+
+リダイレクト URI の決まり:
+
+- **カスタムスキーム**は、自分のドメインを逆にした名前にします（`com.example.app:/callback`。ほかのアプリと重ならないように。RFC 8252 7.1）。
+  登録した文字列との完全一致で確かめます。ほかのアプリが同じスキームを名乗れる OS があるので、できれば Universal Links・App Links（`https://…`。こちらも完全一致）を使ってください。
+- **ループバック**は `http://127.0.0.1/…` か `http://[::1]/…` で登録します。公開クライアントに限り、認可の要求の `redirect_uri` は**ポートだけ違ってよい**ので
+  （RFC 8252 7.3）、アプリは OS から空いているポートをもらい、`http://127.0.0.1:51234/callback` のように指定します。スキーム・ホスト・パス・クエリは
+  登録と同じにします。トークンの交換の `redirect_uri` には、認可の要求と同じ値（ポートまで）を送ります。
+  `http://localhost/…` も登録できますが、ポートまで完全一致です（RFC 8252 8.3 が `localhost` を勧めていないため。名前の解決をほかに向けられることがある）。
+- ログアウト後の URI（`post_logout_redirect_uri`）も、登録したループバックの URI とポートだけ違うものを受け付けます（公開クライアントだけ。パスは完全一致）。
+
+### デスクトップ・CLI（ループバック）
+
+```bash
+# 1. アプリが 127.0.0.1 の空いているポート（例 51234）で待ち受け、code_verifier・state を作って、既定のブラウザで開く
+https://id.example.com/oauth2/authorize?response_type=code&client_id=mycli&scope=openid%20profile%20offline_access
+  &redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2Fcallback&state=<乱数>&code_challenge=<S256>&code_challenge_method=S256
+# 2. ログインの後、ブラウザが http://127.0.0.1:51234/callback?code=…&state=…&iss=… に戻る（state と iss を確かめる）
+# 3. コードをトークンに替える（シークレットは送らない）
+curl -s https://id.example.com/oauth2/token -d grant_type=authorization_code -d client_id=mycli \
+  -d code=<コード> -d redirect_uri=http://127.0.0.1:51234/callback -d code_verifier=<verifier>
+```
+
+### デバイスフロー（ブラウザを開けない CLI・端末）
+
+アプリケーションの「使う方式」で「デバイスコード」を選んだクライアントだけが使えます。
+
+```bash
+# 1. 端末が開始する（公開クライアントは client_id だけ。機密クライアントはトークンのエンドポイントと同じ認証）
+curl -s https://id.example.com/oauth2/device_authorization -d client_id=mycli --data-urlencode 'scope=openid profile offline_access'
+# → {"device_code":"…","user_code":"BCDF-GHJK","verification_uri":"https://id.example.com/device",
+#    "verification_uri_complete":"https://id.example.com/device?user_code=BCDF-GHJK","expires_in":600,"interval":5}
+# 2. 端末は verification_uri と user_code を表示する（QR コードにするなら verification_uri_complete）
+# 3. interval 秒ごとにトークンのエンドポイントに尋ねる
+curl -s https://id.example.com/oauth2/token -d grant_type=urn:ietf:params:oauth:grant-type:device_code \
+  -d client_id=mycli -d device_code=<device_code>
+```
+
+- 利用者は、手元の機器のブラウザで `verification_uri` を開き、ログインして（多要素認証・IP 制限・利用できるグループの制限は通常のログインと同じ）、
+  コードを入力し、アプリの名前と求めているスコープを確かめて「許可」か「拒否」を選びます。コード付きの URL で開いても、この確認は必ず出ます。
+- 3 の応答: 許可を待っている間は `authorization_pending`、間隔より早く尋ねると `slow_down`（以後の間隔を 5 秒延ばすこと）、
+  拒否されたら `access_denied`、期限（10 分）が切れたら `expired_token`。どれも HTTP 400 で、`error` に入ります。許可されたらトークンが返ります。
+- `device_code` は 1 回だけ使えます（トークンを受け取った後にもう一度使うと、そのとき出したトークンも失効します）。
+- `/oauth2/device_authorization` が HTTP 429（`temporarily_unavailable`）を返したら、確認待ちの要求が上限
+  （クライアントごとに 500 件・全体で 5000 件）に達しています。`Retry-After` の秒数を待ってからやり直してください。
+- 利用者には「自分で操作している端末のコードだけを入力する」よう案内してください（他人から送られたコードを入力させるフィッシングがあるため）。
+- 複数のホスト名（ドメイン）で使うとき: `verification_uri` は、端末が開始の要求を送ったホスト名のものです。確認もトークンの取得も、同じホスト名で行います。
+
 ## カスタム属性をクレームにする
 
 管理画面の「属性」で属性を定義し（例 `department`）、アプリの「クレーム・属性の対応」に行を足します。

@@ -25,6 +25,8 @@ object ApiCatalog {
     Endpoint("GET", "/api/auth-requests/{requestId}", "認可の要求（アプリ名・スコープ） → AuthRequestDto"),
     Endpoint("POST", "/api/auth-requests/{requestId}/select", "アカウントを選んで続ける SwitchReq → RedirectDto"),
     Endpoint("POST", "/api/consent", "同意する・しない ConsentReq → RedirectDto"),
+    Endpoint("POST", "/api/device/verify", "デバイスフロー: 端末に表示されたコードを入力する（ログインが必要） DeviceVerifyReq → RedirectDto"),
+    Endpoint("POST", "/api/device/decide", "デバイスフロー: 端末を許可する・しない ConsentReq → RedirectDto"),
     Endpoint("GET", "/api/accounts", "このブラウザでログインしているアカウント → [AccountDto]"),
     Endpoint("POST", "/api/accounts/switch", "使用中のアカウントを切り替える SwitchReq → 204"),
     Endpoint("POST", "/api/accounts/logout", "ログアウト（userId なしならすべて） AccountLogoutReq → 204"),

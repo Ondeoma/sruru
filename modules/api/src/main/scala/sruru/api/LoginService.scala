@@ -71,7 +71,8 @@ final class LoginService(dir: Directory,
             appBrief(a),
             scopes.map(s => ScopeDto(s, scopeLabels.getOrElse(s, s))),
             c.get[String]("prompt").toOption.toList.flatMap(_.split(' ').toList),
-            c.get[String]("login_hint").toOption
+            c.get[String]("login_hint").toOption,
+            c.get[String]("user_code").toOption
           )
         })
       }

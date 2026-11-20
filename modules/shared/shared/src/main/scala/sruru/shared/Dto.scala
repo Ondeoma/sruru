@@ -67,7 +67,9 @@ final case class AuthRequestDto(id: UUID,
                                 app: AppBriefDto,
                                 scopes: List[ScopeDto] = Nil,
                                 prompt: List[String] = Nil,
-                                loginHint: Option[String] = None) derives ConfiguredCodec
+                                loginHint: Option[String] = None,
+                                /** デバイスフローの確認のとき: 利用者が入力したコード（端末の表示と見比べる） */
+                                userCode: Option[String] = None) derives ConfiguredCodec
 
 final case class FlowUserDto(username: String, name: String, avatarUrl: Option[String]) derives ConfiguredCodec
 
@@ -116,6 +118,9 @@ final case class SetupReq(token: String,
 final case class SwitchReq(userId: UUID) derives ConfiguredCodec
 final case class AccountLogoutReq(userId: Option[UUID] = None) derives ConfiguredCodec
 final case class ConsentReq(requestId: UUID, approve: Boolean) derives ConfiguredCodec
+
+/** デバイスフローの確認: 端末に表示されたコードの入力. */
+final case class DeviceVerifyReq(userCode: String) derives ConfiguredCodec
 final case class RedirectDto(redirect: String) derives ConfiguredCodec
 
 /** このブラウザでログインしているアカウント. */

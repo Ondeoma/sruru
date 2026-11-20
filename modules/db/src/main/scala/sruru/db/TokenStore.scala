@@ -191,13 +191,13 @@ final class TokenStore(xa: Transactor[IO]) extends TxStore(xa) {
   )
 
   /**
-   * 認可コードの再利用のとき: そのコードから発行したリフレッシュトークンの系列（回したあとの分も、offline_access も）と、
+   * 認可コード・device_code の再利用のとき: そのコードから発行したリフレッシュトークンの系列（回したあとの分も、offline_access も）と、
    * 同じアプリ・ユーザーのアクセストークン（ログインに結び付いたもの・offline の分）を失効させる.
    */
-  def revokeCodeFamily(c: AuthCode, family: UUID): IO[Unit] = tx(
+  def revokeCodeFamily(appId: UUID, userId: UUID, loginId: Option[UUID], family: UUID): IO[Unit] = tx(
     sql"update refresh_tokens set revoked_at = now() where family = $family and revoked_at is null".update.run *>
-      sql"""update access_tokens set revoked_at = now() where app_id = ${c.appId} and user_id = ${c.userId}
-            and (login_id is not distinct from ${c.loginId} or login_id is null) and revoked_at is null""".update.run.void
+      sql"""update access_tokens set revoked_at = now() where app_id = $appId and user_id = $userId
+            and (login_id is not distinct from $loginId or login_id is null) and revoked_at is null""".update.run.void
   )
 
   /**

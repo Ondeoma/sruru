@@ -98,6 +98,7 @@ object Main extends IOApp.Simple {
         factors = new FactorStore(xa)
         apps = new AppStore(xa)
         tokens = new TokenStore(xa)
+        devices = new DeviceStore(xa)
         auditStore = new AuditStore(xa)
         settings = new SettingsStore(xa)
         fedStore = new FederationStore(xa)
@@ -118,7 +119,8 @@ object Main extends IOApp.Simple {
         fed = new FederationService(fedStore, dir, audit, box, http, lock, cfg.api)
         gate = new AuthGate(auth, apps, tokens, dir, policies, audit)
         claims = new Claims(dir, apps)
-        oidc = new OidcRoutes(apps, tokens, sessions, dir, keys, claims, gate, auth, audit, http, cfg.api)
+        oidc = new OidcRoutes(apps, tokens, devices, sessions, dir, keys, claims, gate, auth, audit, http, cfg.api)
+        device = new DeviceRoutes(apps, devices, tokens, factors, gate, auth, audit, cfg.api)
         saml = new SamlRoutes(apps, tokens, sessions, dir, keys, gate, auth, audit, cfg.api)
         loginR = new LoginRoutes(
           login,
@@ -178,12 +180,16 @@ object Main extends IOApp.Simple {
         domainR = new DomainRoutes(domains, dir, sessions, fedStore, audit, auth, cfg.api)
         scim = new ScimRoutes(dir, sessions, tokens, policies, audit, auth, cfg.api)
         oauth = new OAuthRoutes(new OAuthStore(xa), dir, auth, audit, cfg.api)
-        resume = new ResumeRoutes(tokens, Map("oidc" -> oidc.resume, "saml" -> saml.resume), gate)
+        resume = new ResumeRoutes(
+          tokens,
+          Map("oidc" -> oidc.resume, "saml" -> saml.resume, DeviceRoutes.Protocol -> device.resume),
+          gate
+        )
         _ <- Resource.eval(setupNotice(loginR))
         loops = List[IO[Unit]](
           mail.loop,
           fed.loop,
-          purgeLoop(sessions, dir, tokens, factors, auditStore, mails, settings, policies, domains, lock),
+          purgeLoop(sessions, dir, tokens, devices, factors, auditStore, mails, settings, policies, domains, lock),
           Loops.every(
             10.minutes,
             1.hour,
@@ -192,7 +198,7 @@ object Main extends IOApp.Simple {
         )
         _ <- loops.traverse_(_.background)
         rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> domainR.routes <+>
-          oidc.routes <+>
+          oidc.routes <+> device.routes <+>
           oauth.routes <+> saml.routes <+>
           resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
         app = rest <+> new McpRoutes(rest, auth, cfg.api).routes
@@ -293,6 +299,9 @@ object Main extends IOApp.Simple {
 
   private val handler: PartialFunction[Throwable, IO[Response[IO]]] = {
     case e: AppError => Errors.respond(e)
+    case e: OAuthFailure => IO.pure(OAuthEndpoint.response(e.error))
+    // 読めない本文（フォーム・JSON）: パーサーの文言は返さない（ログには cause として出る）
+    case e: MessageFailure => Errors.respond(AppError(ErrorCode.RequestBodyUnreadable, None, Some(e)))
     case e => Errors.respond(AppError(ErrorCode.Unexpected, None, Some(e)))
   }
 
@@ -326,6 +335,7 @@ object Main extends IOApp.Simple {
   private def purgeLoop(sessions: SessionStore,
                         dir: Directory,
                         tokens: TokenStore,
+                        devices: DeviceStore,
                         factors: FactorStore,
                         audit: AuditStore,
                         mails: MailStore,
@@ -365,6 +375,7 @@ object Main extends IOApp.Simple {
         }
         _ <- sessions.purgeExpired(now)
         _ <- tokens.purge(now)
+        _ <- devices.purge(now)
         _ <- factors.purgeThrottle(now.minusSeconds(86400))
         _ <- factors.purgeEmailTokens(now)
         _ <- mails.purge(now.minusSeconds(30L * 86400))

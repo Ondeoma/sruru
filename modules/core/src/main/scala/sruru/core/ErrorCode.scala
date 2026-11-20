@@ -21,6 +21,7 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case AdminOnly extends ErrorCode("SRURU-1013", 403, "管理者だけが使えます")
   case TooManyRequests extends ErrorCode("SRURU-1016", 429, "要求が多すぎます。しばらくしてからお試しください")
   case AdminDisabledOnDomain extends ErrorCode("SRURU-1017", 403, "このホスト名では管理機能を使えません")
+  case RequestBodyUnreadable extends ErrorCode("SRURU-1018", 400, "本文を読めません")
   case AdminIpDenied extends ErrorCode("SRURU-1014", 403, "この IP アドレスからは管理機能を使えません")
   case PushServiceNotAllowed extends ErrorCode("SRURU-1020", 400, "このプッシュのサービスには送れません")
   case PushSubscriptionInvalid extends ErrorCode("SRURU-1021", 400, "購読の内容が正しくありません")
@@ -52,6 +53,11 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case SignupDisabled extends ErrorCode("SRURU-2026", 403, "アカウントの作成は管理者が行います")
   case MfaEnrollNotInStepUp
     extends ErrorCode("SRURU-2027", 403, "この確認では多要素認証を新しく登録できません。ログインし直してから、設定の画面で登録してください")
+  case DeviceCodeInvalid extends ErrorCode("SRURU-2028", 400, "コードが違うか、有効期限が切れています。端末に表示されたコードを確かめてください")
+  case DeviceTooManyAttempts extends ErrorCode("SRURU-2029", 429, "コードの入力の失敗が多すぎます。しばらくしてからお試しください")
+  case DeviceRequestExpired
+    extends ErrorCode("SRURU-2030", 404, "端末の要求の有効期限が切れたか、すでに処理されています。端末で最初からやり直してください")
+  case DeviceNotAllowed extends ErrorCode("SRURU-2031", 403, "このアプリケーションは使えません")
   case UsernameTaken extends ErrorCode("SRURU-3001", 409, "このユーザー名は使われています")
   case UserNotFound extends ErrorCode("SRURU-3002", 404, "ユーザーが見つかりません")
   case AdminSelfDemote extends ErrorCode("SRURU-3003", 400, "自分の管理者の権限を外したり、自分を無効にしたりはできません")
@@ -74,6 +80,8 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case EntityIdTaken extends ErrorCode("SRURU-5004", 409, "このエンティティ ID は使われています")
   case OidcAppNotFound extends ErrorCode("SRURU-5005", 404, "OIDC のアプリケーションが見つかりません")
   case AppOrUserNotFound extends ErrorCode("SRURU-5006", 404, "アプリケーションかユーザーが見つかりません")
+  case DevicePendingLimit extends ErrorCode("SRURU-5008", 429, "デバイスフローの確認待ちの要求が上限に達しています")
+  case DeviceCodeCollision extends ErrorCode("SRURU-5009", 500, "デバイスフローのコードを作れませんでした")
   case AttributeKeyInvalid extends ErrorCode("SRURU-6002", 400, "キーは英数字と _ にしてください（先頭は英字か _）")
   case AttributeTypeInvalid extends ErrorCode("SRURU-6003", 400, "種類が正しくありません")
   case AdminIpLockout extends ErrorCode("SRURU-6004", 400, "いまの IP アドレスが管理画面の許可に含まれていません")

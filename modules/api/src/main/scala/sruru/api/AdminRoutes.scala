@@ -1204,7 +1204,7 @@ final class AdminRoutes(dir: Directory,
           _ <- o.redirectUris.find(u => !validUrl(u)).map(u => s"リダイレクト URI が不正です: $u").toLeft(())
           _ <- o.postLogoutRedirectUris.find(u => !validUrl(u)).map(u => s"ログアウト後の URI が不正です: $u").toLeft(())
           _ <- Either.cond(
-            o.grantTypes.forall(Set("authorization_code", "refresh_token", "client_credentials").contains),
+            o.grantTypes.forall(OAuthGrants.all.contains),
             (),
             "不明なグラントです"
           )

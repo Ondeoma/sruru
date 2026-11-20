@@ -59,6 +59,10 @@ trait RouteSupport extends sbirds.http.RouteHelpers {
   /** CSRF の確認: 画面が付ける専用のヘッダー（X-Sruru）があること（GET・HEAD・OPTIONS は確かめない）. */
   protected val csrfPolicy: Csrf.Policy = RouteSupport.CsrfPolicy
 
+  /** ログインの前後の画面（Cookie で動く）からの更新系: 自分の画面からの要求（X-Sruru ヘッダー付き）だけを受ける. */
+  protected def csrf(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
+    if !Csrf.fromOwnScreen(req, csrfPolicy) then err(ErrorCode.CsrfHeaderMissing) else f
+
   protected def ctx(req: Request[IO]): IO[ReqCtx] = auth.reqCtx(req)
 
   /** ログインしていなければ 401. 更新系を read スコープのトークンで送ったら 403. 画面からの更新系は CSRF 対策のヘッダーが必要. */

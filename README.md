@@ -13,6 +13,8 @@ sruru は、組織のための認証基盤（IdP）です。OpenID Connect・OAu
   ディスカバリー、JWKS（RS256・ES256。鍵の入れ替え）、UserInfo、イントロスペクション（RFC 7662）、失効（RFC 7009）、
   RP からのログアウト（end_session）、バックチャネルのログアウト、`prompt`（none・login・consent・select_account）・`max_age`、
   `response_mode=form_post`、同意の画面、アクセストークンは JWT（RFC 9068）
+- **ネイティブアプリ**: iOS・Android・デスクトップ・CLI の認証に使える。公開クライアント + PKCE、カスタムスキーム・Universal Links / App Links、
+  ループバックの任意のポート（RFC 8252）、ブラウザのない端末・CLI 向けのデバイスフロー（RFC 8628）。手引きは [docs/integration.md](docs/integration.md)
 - **SAML 2.0**: SP 起点（HTTP-Redirect・HTTP-POST）と IdP 起点の SSO、応答・アサーションの署名（RSA-SHA256）、AuthnRequest の署名の検証、
   SP からのログアウト、IdP のメタデータ、SP のメタデータの読み込み
 - **カスタム属性**: ユーザーに任意の属性（文字列・数値・真偽値・日付・リスト）を定義し、アプリごとにクレーム・SAML 属性へ対応付ける。
@@ -124,6 +126,7 @@ java -cp 'dist/lib/*' sruru.app.Main
 |---|---|
 | OIDC のディスカバリー | `${PUBLIC_URL}/.well-known/openid-configuration` |
 | 認可・トークン・UserInfo | `/oauth2/authorize`・`/oauth2/token`・`/oauth2/userinfo` |
+| デバイスフロー（RFC 8628） | 開始は `/oauth2/device_authorization`、利用者が開く確認の画面は `/device`、トークンは `/oauth2/token` |
 | JWKS・イントロスペクション・失効・ログアウト | `/oauth2/jwks`・`/oauth2/introspect`・`/oauth2/revoke`・`/oauth2/logout` |
 | SAML のメタデータ・SSO・ログアウト | `/saml/metadata`・`/saml/sso`・`/saml/slo`（IdP 起点は `/saml/idp/{スラッグ}`） |
 | SCIM 2.0 | `/scim/v2`（`Authorization: Bearer <scim スコープのトークン>`） |

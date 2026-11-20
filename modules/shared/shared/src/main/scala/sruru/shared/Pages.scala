@@ -7,8 +7,11 @@ object Pages {
   val login: List[String] =
     List("/login", "/choose", "/consent", "/forgot", "/reset-password", "/setup", "/error", "/logged-out")
 
-  /** ログインしていなくても開く画面（ヘッダーを出さない. 画面のブラウザの観測（RUM）も読まない）. */
-  val public: List[String] = "/verify-email" :: login
+  /**
+   * ログインしていなくても開く画面（ヘッダーを出さない. 画面のブラウザの観測（RUM）も読まない）.
+   * /device（デバイスフローの確認）は、コードの入力にログインが要るが、許可を選ぶ画面なのでここに入れる（401 ならログイン画面へ移る）.
+   */
+  val public: List[String] = "/verify-email" :: "/device" :: login
 
   private def under(path: String, ps: List[String]): Boolean = ps.exists(x => path == x || path.startsWith(x + "/"))
 

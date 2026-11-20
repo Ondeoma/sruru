@@ -1,6 +1,5 @@
 package sruru.api
 
-import sbirds.http.Csrf
 import sbirds.shared.AppError
 
 import cats.effect.*
@@ -292,9 +291,6 @@ final class LoginRoutes(login: LoginService,
     auth.ensureBrowser(req).flatMap((b, cookie) =>
       f(b).map(r => cookie.filterNot(_ => r.cookies.exists(_.name == cfg.cookieName)).fold(r)(r.addCookie))
     )
-
-  private def csrf(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
-    if !Csrf.fromOwnScreen(req, csrfPolicy) then err(ErrorCode.CsrfHeaderMissing) else f
 
   /** ログインが完了したら Cookie の値を新しくする. */
   private def rotated(bs: BrowserSession, r: Either[AppError, FlowDto])(res: Response[IO]): IO[Response[IO]] =
