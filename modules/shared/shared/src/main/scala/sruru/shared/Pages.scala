@@ -5,7 +5,7 @@ object Pages {
 
   /** ログイン・同意などの画面（401 でもログイン画面へ移らない）. */
   val login: List[String] =
-    List("/login", "/choose", "/consent", "/forgot", "/reset-password", "/setup", "/error", "/logged-out")
+    List("/login", "/choose", "/consent", "/forgot", "/reset-password", "/magic", "/setup", "/error", "/logged-out")
 
   /**
    * ログインしていなくても開く画面（ヘッダーを出さない. 画面のブラウザの観測（RUM）も読まない）.
@@ -15,6 +15,10 @@ object Pages {
 
   private def under(path: String, ps: List[String]): Boolean = ps.exists(x => path == x || path.startsWith(x + "/"))
 
+  /** URL に一時のトークンを載せて開く画面（Referer で外に漏らさないよう、Referrer-Policy: no-referrer にする）. */
+  val secretInUrl: List[String] = List("/magic", "/reset-password", "/verify-email")
+
   def isLogin(path: String): Boolean = under(path, login)
+  def hasSecretInUrl(path: String): Boolean = under(path, secretInUrl)
   def isPublic(path: String): Boolean = under(path, public)
 }

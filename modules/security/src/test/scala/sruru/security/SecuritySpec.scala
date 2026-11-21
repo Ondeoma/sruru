@@ -13,6 +13,42 @@ class SecuritySpec extends munit.FunSuite {
     assert(!Passwords.verify("x", "garbage"))
   }
 
+  test("bcrypt（jBCrypt の $2a$）も照合でき、作り直しの対象になる") {
+    val pws = List("correct horse", "パスワード🔑日本語", "a" * 100, "")
+    pws.foreach { pw =>
+      val h = org.mindrot.jbcrypt.BCrypt.hashpw(pw, org.mindrot.jbcrypt.BCrypt.gensalt(4))
+      assert(h.startsWith("$2a$04$"))
+      assert(Passwords.isBcrypt(h))
+      assert(Passwords.verify(pw, h), pw)
+      assert(!Passwords.verify(pw + "x", h) || pw.getBytes("UTF-8").length >= 72, pw)
+      assert(Passwords.needsRehash(h))
+    }
+    // 72 バイトを超える部分は jBCrypt と同じく使わない
+    val long = org.mindrot.jbcrypt.BCrypt.hashpw("b" * 80, org.mindrot.jbcrypt.BCrypt.gensalt(4))
+    assert(Passwords.verify("b" * 72 + "zzz", long))
+    assert(!Passwords.verify("b" * 71, long))
+    // $2b$・$2y$ も同じ計算
+    val h = org.mindrot.jbcrypt.BCrypt.hashpw("pw", org.mindrot.jbcrypt.BCrypt.gensalt(4))
+    assert(Passwords.verify("pw", "$2b$" + h.drop(4)))
+    assert(Passwords.verify("pw", "$2y$" + h.drop(4)))
+    assert(!Passwords.verify("pw2", "$2y$" + h.drop(4)))
+  }
+
+  test("取り込みで受け付けるハッシュの形") {
+    val bc = org.mindrot.jbcrypt.BCrypt.hashpw("pw", org.mindrot.jbcrypt.BCrypt.gensalt(10))
+    assert(Passwords.acceptable(bc))
+    assert(Passwords.acceptable(Passwords.hash("pw")))
+    assert(!Passwords.needsRehash(Passwords.hash("pw")))
+    assert(!Passwords.acceptable("$2a$03$" + bc.drop(7))) // コストが小さすぎる
+    assert(!Passwords.acceptable(bc.dropRight(1))) // 長さが違う
+    assert(!Passwords.acceptable("$2x$10$" + bc.drop(7))) // 知らない版
+    assert(!Passwords.acceptable("plain-password"))
+    assert(!Passwords.acceptable("$argon2i$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA"))
+    // パラメータの違う Argon2id は照合でき、作り直しの対象
+    val weak = "$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHRzYWx0$" + "A" * 43
+    assert(Passwords.acceptable(weak) && Passwords.needsRehash(weak))
+  }
+
   test("TOTP（RFC 6238 の試験値）") {
     // 秘密 "12345678901234567890"（ASCII）、時刻 59 → 94287082 の下6桁
     val secret = Totp.base32("12345678901234567890".getBytes)

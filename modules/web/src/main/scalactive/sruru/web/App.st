@@ -24,6 +24,7 @@ val routes: PathPatternRoutes = List(
   ("/device", _ => DeviceView()),
   ("/forgot", _ => ForgotView()),
   ("/reset-password", _ => ResetPasswordView()),
+  ("/magic", _ => MagicView()),
   ("/setup", _ => SetupView()),
   ("/error", _ => ErrorView()),
   ("/logged-out", _ => LoggedOutView()),

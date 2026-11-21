@@ -180,6 +180,18 @@ final class UserStore(xa: Transactor[IO]) extends TxStore(xa) {
         )})""".update.run.void
   )
 
+  /**
+   * 同じパスワードのハッシュを新しい形式に置き換える（bcrypt → Argon2id など）. 変更の日時・失敗の回数は変えない.
+   * 今の値が from のままのときだけ書き換え（並行してパスワードが変わっていたら何もしない）、履歴の同じ値も置き換える. 置き換えたら true.
+   */
+  def rehashPassword(id: UUID, from: String, to: String): IO[Boolean] = tx(
+    sql"update users set password_hash = $to where id = $id and password_hash = $from".update.run.flatMap {
+      case 0 => false.pure[ConnectionIO]
+      case _ =>
+        sql"update password_history set hash = $to where user_id = $id and hash = $from".update.run.as(true)
+    }
+  )
+
   def passwordHistory(id: UUID, n: Int): IO[List[String]] =
     tx(sql"select hash from password_history where user_id = $id order by created_at desc limit $n".query[
       String

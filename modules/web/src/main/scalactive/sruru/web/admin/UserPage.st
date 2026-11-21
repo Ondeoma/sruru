@@ -80,6 +80,11 @@ def resetMfa(s: State, props: Props): Unit =
     act(s, props, "/reset-mfa", "2段階認証の登録を消しました")
   }
 
+def sendMagic(s: State, props: Props): Unit =
+  Dialog.confirm("登録されているメールアドレスへ、ログインのリンク（1回だけ使える）を送りますか？", "送る") {
+    act(s, props, "/magic-link", "ログインのリンクを送りました")
+  }
+
 def forceLogout(s: State, props: Props): Unit =
   Dialog.confirm("すべての端末からログアウトさせ、発行したトークンを失効させますか？", "ログアウトさせる") {
     act(s, props, "/logout", "ログアウトさせました")
@@ -153,6 +158,7 @@ def isMe(props: Props): Boolean = Store.myId.exists(_.toString == props.id)
         <button @click="openPw(s)">パスワードを設定</button>
         <button v-if="d.user.locked" @click="unlock(s, props)">ロックを解除</button>
         <button v-if="d.user.mfaEnabled" @click="resetMfa(s, props)">2段階認証をリセット</button>
+        <button v-if="d.user.email.isDefined && !d.user.isService && !d.user.disabled" @click="sendMagic(s, props)">ログインのリンクを送る</button>
         <button @click="forceLogout(s, props)">すべての端末からログアウト</button>
         <span class="grow"></span>
         <button v-if="!isMe(props)" class="danger" @click="remove(s, props)">削除</button>

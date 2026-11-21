@@ -93,6 +93,27 @@ final case class FlowDto(id: UUID,
                          request: Option[AuthRequestDto] = None,
                          message: Option[String] = None) derives ConfiguredCodec
 
+/**
+ * マジックリンクの発行（サービスから. POST /api/magic-links）. user はユーザー名かメールアドレス.
+ * redirectUri・scope・state・nonce・codeChallenge（S256）・responseMode は、リンクを使ったときに作る認可の要求の値.
+ * delivery: url（URL を返す）| email（sruru が確認済みのアドレスへ送る）.
+ */
+final case class MagicLinkReq(user: String,
+                              redirectUri: Option[String] = None,
+                              scope: Option[String] = None,
+                              state: Option[String] = None,
+                              nonce: Option[String] = None,
+                              codeChallenge: Option[String] = None,
+                              codeChallengeMethod: Option[String] = None,
+                              responseMode: Option[String] = None,
+                              delivery: String = "url") derives ConfiguredCodec
+
+/** マジックリンクの発行の結果. url は delivery = url のときだけ. */
+final case class MagicLinkDto(delivery: String, expiresIn: Long, url: Option[String] = None) derives ConfiguredCodec
+
+/** マジックリンクを使う（確認の画面のボタンから）. */
+final case class MagicLoginReq(token: String) derives ConfiguredCodec
+
 final case class LoginStartReq(requestId: Option[UUID] = None,
                                returnTo: Option[String] = None,
                                add: Boolean = false,
@@ -290,7 +311,9 @@ final case class UserReq(username: String,
                          groupIds: Option[List[UUID]] = None,
                          locale: Option[String] = None,
                          zoneinfo: Option[String] = None,
-                         phoneNumber: Option[String] = None) derives ConfiguredCodec
+                         phoneNumber: Option[String] = None,
+                         /** 移行のための取り込み: ほかのシステムのハッシュ（bcrypt・Argon2id）. 作成のときだけ. password とは同時に指定できない */
+                         passwordHash: Option[String] = None) derives ConfiguredCodec
 
 final case class SetPasswordReq(password: Option[String] = None,
                                 mustChange: Boolean = true,
@@ -380,7 +403,8 @@ final case class OidcDto(clientId: String = "",
                          refreshTokenTtl: Int = 2592000,
                          includeGroups: Boolean = true,
                          backchannelLogoutUri: Option[String] = None,
-                         includeAppNames: Boolean = false) derives ConfiguredCodec
+                         includeAppNames: Boolean = false,
+                         magicLinks: Boolean = false) derives ConfiguredCodec
 
 final case class SamlDto(
   entityId: String = "",

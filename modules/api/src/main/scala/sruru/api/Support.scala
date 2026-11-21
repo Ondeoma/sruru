@@ -21,7 +21,9 @@ final case class ApiConfig(publicUrl: String,
                            devMode: Boolean = false,
                            mailEnabled: Boolean = false,
                            nodeId: String = "node",
-                           oauthClients: List[OAuthClient] = Nil) {
+                           oauthClients: List[OAuthClient] = Nil,
+                           /** マジックリンクの有効期限（分） */
+                           magicLinkMinutes: Int = 15) {
 
   private val scheme = publicUrl.takeWhile(_ != ':')
 

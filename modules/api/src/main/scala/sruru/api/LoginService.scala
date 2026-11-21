@@ -85,13 +85,14 @@ final class LoginService(dir: Directory,
     (if l.length <= 2 then l.take(1) + "*" else l.take(2) + "*" * math.min(6, l.length - 2)) + d
   }
 
-  private def methods(u: User, p: PoliciesDto): IO[List[String]] =
+  /** 2つ目の要素に使える方法. マジックリンクの流れではメールのコードを使わない（リンクと同じ受信箱なので、要素が増えない）. */
+  private def methods(u: User, p: PoliciesDto, f: LoginFlow): IO[List[String]] =
     (factors.totps(u.id), factors.recoveryRemaining(u.id)).mapN {
       (ts, rec) =>
         List(
           Option.when(p.mfa.allowTotp && ts.exists(_.confirmed))("totp"),
           // 確認済みのアドレスだけ（未確認のアドレスへ2つ目の要素を送らない）
-          Option.when(p.mfa.allowEmail && u.email.isDefined && u.emailVerified)("email"),
+          Option.when(p.mfa.allowEmail && u.email.isDefined && u.emailVerified && !isMagic(f))("email"),
           Option.when(rec > 0)("recovery")
         ).flatten
     }
@@ -100,7 +101,7 @@ final class LoginService(dir: Directory,
     for {
       u <- f.userId.flatTraverse(dir.users.find)
       p <- u.fold(policies.get)(dir.policyFor)
-      ms <- u.filter(_ => f.stage == "mfa").fold(IO.pure(Nil))(methods(_, p))
+      ms <- u.filter(_ => f.stage == "mfa").fold(IO.pure(Nil))(methods(_, p, f))
       req <- f.authRequestId.flatTraverse(requestDto)
       rules <- if f.stage == "change_password" || f.stage == "identify" then
         u.fold(dir.passwordRules)(dir.passwordRulesFor)
@@ -217,7 +218,7 @@ final class LoginService(dir: Directory,
       }
     } yield ()
 
-  private def precheck(c: ReqCtx): IO[Option[AppError]] =
+  private[api] def precheck(c: ReqCtx): IO[Option[AppError]] =
     // IP 制限・試行の制限
     sessionsIp(c).flatMap {
       case false => IO.pure(Some(AppError(ErrorCode.LoginIpDenied)))
@@ -253,7 +254,12 @@ final class LoginService(dir: Directory,
                   IO.blocking(Passwords.verify(req.password, Passwords.dummy)) *>
                     failed(c, None, "login.failure", s"locked: ${x.username}").as(Left(AppError(ErrorCode.LoginFailed)))
                 case Some(x) =>
-                  IO.blocking(Passwords.verify(req.password, x.passwordHash.get)).flatMap {
+                  dir.verifyPassword(x, req.password).flatTap {
+                    // 移行した bcrypt などを Argon2id に置き換えた（以後は古い形式を残さない）
+                    case (_, true) =>
+                      audit.log(c, Some(x), "web", "user.password.rehash", audit.userTarget(x))
+                    case _ => IO.unit
+                  }.map(_._1).flatMap {
                     case false =>
                       failed(c, Some(x), "login.failure", "wrong password").as(Left(AppError(ErrorCode.LoginFailed)))
                     case true if x.disabled =>
@@ -298,10 +304,11 @@ final class LoginService(dir: Directory,
       hasTotp <- dir.hasTotp(u.id)
       appMfa <- appRequiresMfa(f)
       stepUp = isStepUp(f)
+      magic = isMagic(f)
       needPw = f.amr.contains(Amr.Pwd) && (u.mustChangePassword || dir.passwordExpired(u, p, now))
       required = dir.mfaRequired(u, m, p) || appMfa || stepUp
       needMfa = !Amr.isMulti(f.amr) && ((p.mfa.mode != "off" && (required || hasTotp)) || appMfa || stepUp)
-      ms <- methods(u, p)
+      ms <- methods(u, p, f)
       res <-
         // パスワードの変更は多要素認証の後（パスワードだけを知る人に変えさせない）. 多要素の追加（stepUp）では求めない
         // （盗んだ Cookie から、今のパスワードを知らずに変えられないように. 次の通常のログインで求める）
@@ -312,9 +319,16 @@ final class LoginService(dir: Directory,
         // 多要素認証の追加（stepUp）では、登録済みの要素（回復コードを含む）だけ受け付け、新しい要素は登録させない
         // （盗んだ Cookie だけで自分の認証アプリを登録し、多要素認証を済ませたことにできないように.
         //  登録は、パスワードでログインし直すか、直近のログインが要る設定の画面から行う）
-        else if needMfa && stepUp && ms.nonEmpty then save(f.copy(stage = "mfa"))
+        // マジックリンクの流れも同じ（受信箱だけで認証アプリを登録し、多要素認証を済ませたことにできないように）
+        else if needMfa && (stepUp || magic) && ms.nonEmpty then save(f.copy(stage = "mfa"))
         else if needMfa && stepUp then
           sessions.deleteFlow(f.id).as(FlowDto(f.id, "error", message = Some(ErrorCode.MfaEnrollNotInStepUp.message)))
+        else if needMfa && magic then
+          sessions.deleteFlow(f.id).as(FlowDto(
+            f.id,
+            "error",
+            message = Some(ErrorCode.MagicLinkMfaEnrollNeeded.message)
+          ))
         else if needMfa && required && p.mfa.allowTotp then save(f.copy(stage = "enroll_mfa"))
         else if needMfa && required then
           IO.pure(FlowDto(f.id, "error", message = Some("多要素認証の方法が登録されていません。管理者に連絡してください")))
@@ -386,6 +400,9 @@ final class LoginService(dir: Directory,
   /** 多要素認証の追加（使用中のアカウントのまま、2つ目の要素だけ求める流れ）か. */
   private def isStepUp(f: LoginFlow): Boolean = f.data.hcursor.get[Boolean]("stepUp").getOrElse(false)
 
+  /** マジックリンクで本人確認した流れか（そのログインからの多要素認証の追加も含む）. */
+  private def isMagic(f: LoginFlow): Boolean = f.amr.contains(Amr.Magic)
+
   /** この流れの中で、すでに登録してある要素（2つ目の要素・証明書・外部の IdP）を確かめた印（login_flows.data）. */
   private val Proved = "proved"
   private def proved(f: LoginFlow): LoginFlow = f.copy(data = f.data.deepMerge(Json.obj(Proved -> true.asJson)))
@@ -411,7 +428,7 @@ final class LoginService(dir: Directory,
                           case None => IO.pure(None)
                         }
                       })
-                    case "email" if p.mfa.allowEmail && u.emailVerified =>
+                    case "email" if p.mfa.allowEmail && u.emailVerified && !isMagic(f) =>
                       factors.emailToken(u.id, "login", now).flatMap {
                         case Some(t) if t.attempts < EmailMaxTry =>
                           // 回数の確認と加算は1つの SQL で行う（並列に送って上限を超えられないように）
@@ -463,7 +480,7 @@ final class LoginService(dir: Directory,
           (p, now) =>
             val last = f.data.hcursor.get[Long]("emailAt").getOrElse(0L)
             // 確認済みのアドレスだけ（methods と同じ条件. 未確認のアドレスへ2つ目の要素を送らない）
-            if f.stage != "mfa" || !p.mfa.allowEmail || u.email.isEmpty || !u.emailVerified then
+            if f.stage != "mfa" || !p.mfa.allowEmail || u.email.isEmpty || !u.emailVerified || isMagic(f) then
               Res.fail(ErrorCode.EmailCodeDisabled)
             else if now.getEpochSecond - last < 30 then Res.fail(AppError(ErrorCode.EmailCodeTooSoon))
             else {

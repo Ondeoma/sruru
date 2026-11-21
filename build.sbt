@@ -83,7 +83,9 @@ lazy val security = (project in file("modules/security"))
   .settings(
     libraryDependencies ++= Seq(
       "org.bouncycastle" % "bcprov-jdk18on" % bcV,
-      "org.bouncycastle" % "bcpkix-jdk18on" % bcV
+      "org.bouncycastle" % "bcpkix-jdk18on" % bcV,
+      // 移行するユーザーの bcrypt のハッシュ（jBCrypt）と互換かを確かめる
+      "org.mindrot" % "jbcrypt" % "0.4" % Test
     )
   )
 

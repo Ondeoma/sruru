@@ -104,6 +104,42 @@ curl -s https://id.example.com/oauth2/token -d grant_type=urn:ietf:params:oauth:
 - 利用者には「自分で操作している端末のコードだけを入力する」よう案内してください（他人から送られたコードを入力させるフィッシングがあるため）。
 - 複数のホスト名（ドメイン）で使うとき: `verification_uri` は、端末が開始の要求を送ったホスト名のものです。確認もトークンの取得も、同じホスト名で行います。
 
+## メールのリンクで自動ログインさせる（マジックリンク）
+
+サービスが自分で送るメールに「開くとログインできるリンク」を入れたいときに使う（例: streaming の `?token=` の置き換え）。
+
+1. 管理画面のアプリケーションの設定で「マジックリンクの発行を許可する」を入れる（機密クライアントだけ）。
+   これを入れると、そのサービスは利用者の受信箱と同じ強さの権限を持つ（リンクを使った人は sruru にもログインする）。
+2. サービスのサーバーから発行する。`state`・PKCE の `code_verifier` はサービスのサーバー側に `state` をキーにして保存しておく
+   （リンクを開くブラウザは、発行を求めたときのブラウザと違うことがあるので Cookie には頼れない）。
+
+```bash
+curl -u "$CLIENT_ID:$CLIENT_SECRET" -H 'Content-Type: application/json' https://sruru.example.com/api/magic-links \
+  -d '{"user": "taro@example.com", "redirectUri": "https://app.example.com/auth/callback",
+       "scope": "openid email profile", "state": "…", "nonce": "…", "codeChallenge": "…", "codeChallengeMethod": "S256"}'
+# → {"delivery": "url", "expiresIn": 900, "url": "https://sruru.example.com/magic?token=…"}
+```
+
+- `user` はユーザー名かメールアドレス。`redirectUri` は登録済みのリダイレクト URI と完全一致（1つだけなら省略可）。
+- `"delivery": "email"` にすると、URL を返さずに sruru が利用者の確認済みのアドレスへ送る。
+- リンクは 15 分（sruru の `MAGIC_LINK_MINUTES`）・1回限り。同じ利用者に新しく出すと前のものは使えなくなる。
+  利用者ごとに 15 分で 5 回、クライアントごとに 15 分で 500 回まで（超えたら 429 `SRURU-2034`）。
+- 発行できない相手: 無効・ロック中・アプリを使えるグループの外・sruru の管理者（403 `SRURU-2035`）。
+3. 利用者がリンクを開くと確認の画面が出て、「ログインする」を押すと（多要素認証が必要ならその後）、`redirectUri` に
+   `code`・`state`・`iss` が返る。あとは通常の認可コードと同じく `/oauth2/token` で交換する（ID トークンの `amr` は `magic`）。
+
+## 他のシステムからユーザーを移す（bcrypt のハッシュ）
+
+`POST /api/admin/users`（admin スコープの API トークン）に、平文のパスワードの代わりに `passwordHash` を渡す。
+jBCrypt などの bcrypt（`$2a$`・`$2b$`・`$2y$`）と Argon2id（PHC 形式）を受け付け、利用者が初めてログインしたときに Argon2id に置き換わる。
+作成のときだけ使える（更新では受け付けない）。移す元で確認してあるアドレスなら `"emailVerified": true` も付ける。
+
+```bash
+curl -H "Authorization: Bearer $SRURU_TOKEN" -H 'Content-Type: application/json' https://sruru.example.com/api/admin/users \
+  -d '{"username": "taro", "name": "山田 太郎", "email": "taro@example.com", "emailVerified": true,
+       "passwordHash": "$2a$10$…"}'
+```
+
 ## カスタム属性をクレームにする
 
 管理画面の「属性」で属性を定義し（例 `department`）、アプリの「クレーム・属性の対応」に行を足します。

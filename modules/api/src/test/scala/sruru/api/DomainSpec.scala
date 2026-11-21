@@ -96,6 +96,7 @@ class DomainSpec extends CatsEffectSuite {
           )
         val loginR = new LoginRoutes(
           login,
+          new MagicLinkService(dir, login, sessions, factors, tokens, apps, audit, mail, cfg),
           fed,
           fedStore,
           auth,

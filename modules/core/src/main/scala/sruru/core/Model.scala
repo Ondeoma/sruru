@@ -147,7 +147,9 @@ final case class OidcClientConfig(
   includeGroups: Boolean,
   backchannelLogoutUri: Option[String],
   /** sbirds のサービス向けに、アプリケーションの表示名（sbirds_apps・sbirds_app）を ID トークンに入れる */
-  includeAppNames: Boolean = false) {
+  includeAppNames: Boolean = false,
+  /** マジックリンクの発行を許す（サービスが利用者のログインのリンクを作れる. 機密クライアントだけ） */
+  magicLinks: Boolean = false) {
   def isPublic: Boolean = secretHash.isEmpty
 }
 
@@ -181,6 +183,7 @@ object Amr {
   val Email = "email"
   val Swk = "swk" // クライアント証明書
   val Fed = "fed" // 外部の IdP
+  val Magic = "magic" // マジックリンク（メールなどで受け取った一時のリンク）
   def isMulti(amr: List[String]): Boolean = amr.contains(Mfa)
 }
 

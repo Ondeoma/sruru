@@ -58,6 +58,18 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case DeviceRequestExpired
     extends ErrorCode("SRURU-2030", 404, "端末の要求の有効期限が切れたか、すでに処理されています。端末で最初からやり直してください")
   case DeviceNotAllowed extends ErrorCode("SRURU-2031", 403, "このアプリケーションは使えません")
+  case MagicLinkInvalid
+    extends ErrorCode("SRURU-2032", 400, "ログインのリンクが無効です。有効期限が切れているか、すでに使われています。もう一度リンクを受け取ってください")
+  case MagicLinkNotAllowed extends ErrorCode("SRURU-2033", 403, "このクライアントにはマジックリンクの発行が許可されていません")
+  case MagicLinkTooMany extends ErrorCode("SRURU-2034", 429, "ログインのリンクの発行が多すぎます。しばらくしてからお試しください")
+  case MagicLinkUserNotAllowed extends ErrorCode("SRURU-2035", 403, "このユーザーにはログインのリンクを発行できません")
+  case MagicLinkUserNotFound extends ErrorCode("SRURU-2036", 404, "ユーザーが見つかりません")
+  case MagicLinkRedirectInvalid extends ErrorCode("SRURU-2037", 400, "redirectUri が登録されたリダイレクト URI と一致しません")
+  case MagicLinkNoEmail extends ErrorCode("SRURU-2038", 400, "送り先のメールアドレスがありません")
+  case MagicLinkClientAuthFailed extends ErrorCode("SRURU-2039", 401, "クライアントの認証に失敗しました")
+  case MagicLinkRequestInvalid extends ErrorCode("SRURU-2040", 400, "要求が正しくありません")
+  case MagicLinkMfaEnrollNeeded
+    extends ErrorCode("SRURU-2041", 403, "多要素認証の登録が必要です。パスワードでログインしてから、認証アプリを登録してください")
   case UsernameTaken extends ErrorCode("SRURU-3001", 409, "このユーザー名は使われています")
   case UserNotFound extends ErrorCode("SRURU-3002", 404, "ユーザーが見つかりません")
   case AdminSelfDemote extends ErrorCode("SRURU-3003", 400, "自分の管理者の権限を外したり、自分を無効にしたりはできません")
@@ -68,6 +80,10 @@ enum ErrorCode(val code: String, val status: Int, val message: String) extends s
   case EmailNotRegistered extends ErrorCode("SRURU-3008", 400, "メールアドレスが登録されていません")
   case EmailLinkUsed extends ErrorCode("SRURU-3009", 400, "このリンクはすでに使われています")
   case EmailLinkExpired extends ErrorCode("SRURU-3010", 400, "リンクの有効期限が切れているか、別のアカウントのものです")
+  case PasswordHashUnsupported
+    extends ErrorCode("SRURU-3011", 400, "パスワードのハッシュの形式が正しくありません（bcrypt の $2a$・$2b$・$2y$ か、Argon2id の PHC 形式）")
+  case PasswordAndHashBoth extends ErrorCode("SRURU-3012", 400, "password と passwordHash は同時に指定できません")
+  case PasswordHashCreateOnly extends ErrorCode("SRURU-3013", 400, "passwordHash はユーザーの作成のときだけ指定できます")
   case GroupNameTaken extends ErrorCode("SRURU-4001", 409, "同じ名前のグループがあります")
   case GroupParentCycle extends ErrorCode("SRURU-4002", 400, "親グループが循環しています")
   case PolicyEditForbidden extends ErrorCode("SRURU-4005", 403, "このグループのポリシーを編集する権限がありません")

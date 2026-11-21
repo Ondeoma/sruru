@@ -56,6 +56,7 @@ object Config {
           devMode = dev,
           mailEnabled = smtp.isDefined,
           oauthClients = oauth,
+          magicLinkMinutes = int("MAGIC_LINK_MINUTES").map(m => math.max(1, math.min(m, 1440))).getOrElse(15),
           nodeId = opt("NODE_ID").getOrElse(java.net.InetAddress.getLocalHost.getHostName + "-" +
             java.util.UUID.randomUUID().toString.take(8))
         ),

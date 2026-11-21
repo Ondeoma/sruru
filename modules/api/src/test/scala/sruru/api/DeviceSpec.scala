@@ -106,6 +106,7 @@ class DeviceSpec extends CatsEffectSuite {
         val device = new DeviceRoutes(apps, devices, tokens, factors, gate, auth, audit, cfg)
         val loginR = new LoginRoutes(
           login,
+          new MagicLinkService(dir, login, sessions, factors, tokens, apps, audit, mail, cfg),
           fed,
           fedStore,
           auth,

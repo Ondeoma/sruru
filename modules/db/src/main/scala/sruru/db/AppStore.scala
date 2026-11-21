@@ -71,14 +71,14 @@ final class AppStore(xa: Transactor[IO]) extends TxStore(xa) {
 
   private val oidcCols =
     fr"""o.app_id, o.client_id, o.secret_hash, o.redirect_uris, o.post_logout_redirect_uris, o.grant_types, o.scopes,
-    o.consent, o.sub_mode, o.signing_alg, o.access_token_ttl, o.id_token_ttl, o.refresh_token_ttl, o.include_groups, o.backchannel_logout_uri, o.include_app_names"""
+    o.consent, o.sub_mode, o.signing_alg, o.access_token_ttl, o.id_token_ttl, o.refresh_token_ttl, o.include_groups, o.backchannel_logout_uri, o.include_app_names, o.magic_links"""
 
   private def insertOidc(o: OidcClientConfig): ConnectionIO[Int] =
     sql"""insert into oidc_clients (app_id, client_id, secret_hash, redirect_uris, post_logout_redirect_uris, grant_types, scopes, consent,
-            sub_mode, signing_alg, access_token_ttl, id_token_ttl, refresh_token_ttl, include_groups, backchannel_logout_uri, include_app_names)
+            sub_mode, signing_alg, access_token_ttl, id_token_ttl, refresh_token_ttl, include_groups, backchannel_logout_uri, include_app_names, magic_links)
           values (${o.appId}, ${o.clientId}, ${o.secretHash}, ${o.redirectUris.toArray}, ${o.postLogoutRedirectUris.toArray}, ${o.grantTypes.toArray},
             ${o.scopes.toArray}, ${o.consent}, ${o.subMode}, ${o.signingAlg}, ${o.accessTokenTtl}, ${o.idTokenTtl}, ${o.refreshTokenTtl},
-            ${o.includeGroups}, ${o.backchannelLogoutUri}, ${o.includeAppNames})""".update.run
+            ${o.includeGroups}, ${o.backchannelLogoutUri}, ${o.includeAppNames}, ${o.magicLinks})""".update.run
 
   def oidc(appId: UUID): IO[Option[OidcClientConfig]] =
     tx((fr"select" ++ oidcCols ++ fr"from oidc_clients o where o.app_id = $appId").query[OidcClientConfig].option)
@@ -102,7 +102,8 @@ final class AppStore(xa: Transactor[IO]) extends TxStore(xa) {
                 post_logout_redirect_uris = ${o.postLogoutRedirectUris.toArray}, grant_types = ${o.grantTypes.toArray}, scopes = ${o.scopes.toArray},
                 consent = ${o.consent}, sub_mode = ${o.subMode}, signing_alg = ${o.signingAlg}, access_token_ttl = ${o.accessTokenTtl},
                 id_token_ttl = ${o.idTokenTtl}, refresh_token_ttl = ${o.refreshTokenTtl}, include_groups = ${o.includeGroups},
-                backchannel_logout_uri = ${o.backchannelLogoutUri}, include_app_names = ${o.includeAppNames}
+                backchannel_logout_uri = ${o.backchannelLogoutUri}, include_app_names = ${o.includeAppNames},
+                magic_links = ${o.magicLinks}
               where app_id = ${o.appId}""".update.run.as(Right(()))
     }
   )

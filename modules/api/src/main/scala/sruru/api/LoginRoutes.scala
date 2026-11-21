@@ -21,6 +21,7 @@ import java.util.UUID
  * クライアント証明書と外部の IdP でのログイン・アイコンの画像.
  */
 final class LoginRoutes(login: LoginService,
+                        magic: MagicLinkService,
                         fed: FederationService,
                         fedStore: FederationStore,
                         val auth: SessionAuth,
@@ -50,6 +51,7 @@ final class LoginRoutes(login: LoginService,
     case req @ POST -> Root / "api" / "login" / "register" => postLoginRegister(req)
     case req @ POST -> Root / "api" / "login" / "forgot" => postLoginForgot(req)
     case req @ POST -> Root / "api" / "login" / "reset" => postLoginReset(req)
+    case req @ POST -> Root / "api" / "login" / "magic" => postLoginMagic(req)
     case req @ GET -> Root / "auth" / "cert" => getAuthCert(req)
     case req @ GET -> Root / "auth" / "fed" / slug / "start" => getAuthFedStart(req, slug)
     case req @ GET -> Root / "auth" / "fed" / slug / "callback" => getAuthFedCallback(req, slug)
@@ -160,6 +162,12 @@ final class LoginRoutes(login: LoginService,
 
   private def postLoginReset(req: Request[IO]): IO[Response[IO]] =
     csrf(req)(body[ResetReq](req)(r => ctx(req).flatMap(c => noContent(login.reset(c, r)))))
+
+  /** マジックリンクを使う（確認の画面のボタンから. 開いただけでは使わない）. */
+  private def postLoginMagic(req: Request[IO]): IO[Response[IO]] =
+    csrf(req)(body[MagicLoginReq](req)(r =>
+      withBrowser(req)(bs => ctx(req).flatMap(c => flowJson(bs)(magic.consume(c, bs, r.token))))
+    ))
 
   private def getAuthCert(req: Request[IO]): IO[Response[IO]] =
     param(req, "flow").flatMap(uuidParam).fold(redirectTo("/login"))(certLogin(req, _))

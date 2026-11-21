@@ -934,67 +934,91 @@ final class AdminRoutes(dir: Directory,
         phoneNumber = r.phoneNumber.filter(_.nonEmpty)
       )
 
-  private def createUser(p: Principal, r: UserReq, c: ReqCtx): Res[UserDto] =
-    dir.users.attributeDefs.flatMap { defs =>
-      fromReq(r, None, defs) match {
-        case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
-        case Right(f) =>
-          r.password.filter(_.nonEmpty).traverse(pw => dir.checkPassword(None, pw)).map(_.sequence).flatMap {
-            case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
-            case Right(_) =>
-              r.password.filter(_.nonEmpty).traverse(Directory.hash).flatMap(h =>
-                dir.users.create(NewUser(r.username.trim, None, r.name, passwordHash = h, isService = r.isService))
-              ).flatMap {
-                case Left(e) => Res.fail(e)
-                case Right(u0) =>
-                  dir.users.save(f(u0)).flatMap {
-                    case Left(e) => dir.users.delete(u0.id) *> Res.fail(e)
-                    case Right(u) =>
-                      r.groupIds.traverse_(gs => gs.traverse_(g => dir.groups.addMember(g, u.id))) *>
-                        dir.recomputeUser(u) *>
-                        audit.byPrincipal(c, p, "user.create", audit.userTarget(u)) *> userDto(u).map(Right(_))
-                  }
-              }
-          }
+  private def createUser(p: Principal, r: UserReq, c: ReqCtx): Res[UserDto] = {
+    val imported = r.passwordHash.map(_.trim).filter(_.nonEmpty)
+    if imported.isDefined && r.password.exists(_.nonEmpty) then Res.fail(ErrorCode.PasswordAndHashBoth)
+    // 移行のための取り込み: 形の正しい bcrypt・Argon2id だけ（ログインに成功したときに Argon2id に置き換わる）
+    else if imported.exists(h => !Passwords.acceptable(h)) then Res.fail(ErrorCode.PasswordHashUnsupported)
+    else
+      dir.users.attributeDefs.flatMap { defs =>
+        fromReq(r, None, defs) match {
+          case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
+          case Right(f) => createChecked(p, r, c, f, imported)
+        }
       }
+  }
+
+  private def createChecked(p: Principal,
+                            r: UserReq,
+                            c: ReqCtx,
+                            f: User => User,
+                            imported: Option[String]): Res[UserDto] =
+    r.password.filter(_.nonEmpty).traverse(pw => dir.checkPassword(None, pw)).map(_.sequence).flatMap {
+      case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
+      case Right(_) =>
+        r.password.filter(_.nonEmpty).traverse(Directory.hash).map(_.orElse(imported)).flatMap(h =>
+          dir.users.create(NewUser(r.username.trim, None, r.name, passwordHash = h, isService = r.isService))
+        ).flatMap {
+          case Left(e) => Res.fail(e)
+          case Right(u0) =>
+            dir.users.save(f(u0)).flatMap {
+              case Left(e) => dir.users.delete(u0.id) *> Res.fail(e)
+              case Right(u) =>
+                r.groupIds.traverse_(gs => gs.traverse_(g => dir.groups.addMember(g, u.id))) *>
+                  dir.recomputeUser(u) *>
+                  audit.byPrincipal(
+                    c,
+                    p,
+                    "user.create",
+                    audit.userTarget(u),
+                    // 取り込んだハッシュは、種類だけを残す（値は残さない）
+                    detail = imported.fold(Json.obj())(h =>
+                      Json.obj("passwordHash" -> (if Passwords.isBcrypt(h) then "bcrypt" else "argon2id").asJson)
+                    )
+                  ) *> userDto(u).map(Right(_))
+            }
+        }
     }
 
   private def updateUser(p: Principal, id: UUID, r: UserReq, c: ReqCtx): Res[UserDto] =
-    (dir.users.find(id), dir.users.attributeDefs).tupled.flatMap {
-      case (None, _) => Res.fail(ErrorCode.UserNotFound)
-      case (Some(u), defs) =>
-        fromReq(r, Some(u), defs) match {
-          case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
-          case Right(f) =>
-            val next = f(u)
-            if u.id == p.id && (!next.isAdmin && u.isAdmin || next.disabled) then
-              Res.fail(ErrorCode.AdminSelfDemote)
-            // メールアドレスはパスワードの再設定の宛先になるので、トークンからは変えさせない
-            else if (next.email != u.email || next.emailVerified != u.emailVerified) && !p.via.isInstanceOf[Via.Web]
-            then
-              Res.fail(ErrorCode.EmailChangeUiOnly)
-            else
-              dir.users.save(next).flatMap {
-                case Left(e) => Res.fail(e)
-                case Right(saved) =>
-                  val becameDisabled = saved.disabled && !u.disabled
-                  r.groupIds.traverse_(gs =>
-                    dir.groups.staticGroupIds(id).flatMap { cur =>
-                      (gs.filterNot(cur.contains).traverse_(g => dir.groups.addMember(g, id)) *>
-                        cur.filterNot(gs.contains).traverse_(g => dir.groups.removeMember(g, id)))
-                    }
-                  ) *>
-                    IO.whenA(becameDisabled)(revokeAll(saved)) *> dir.recomputeUser(saved) *>
-                    audit.byPrincipal(
-                      c,
-                      p,
-                      if becameDisabled then "user.disable" else "user.update",
-                      audit.userTarget(saved),
-                      detail = Json.obj("changes" -> diff(u, saved))
-                    ) *> userDto(saved).map(Right(_))
-              }
-        }
-    }
+    // 既存のユーザーのパスワードを、ハッシュで差し替える入口は作らない（取り込みは作成のときだけ）
+    if r.passwordHash.exists(_.trim.nonEmpty) then Res.fail(ErrorCode.PasswordHashCreateOnly)
+    else
+      (dir.users.find(id), dir.users.attributeDefs).tupled.flatMap {
+        case (None, _) => Res.fail(ErrorCode.UserNotFound)
+        case (Some(u), defs) =>
+          fromReq(r, Some(u), defs) match {
+            case Left(e) => Res.fail(ErrorCode.InvalidInput, e)
+            case Right(f) =>
+              val next = f(u)
+              if u.id == p.id && (!next.isAdmin && u.isAdmin || next.disabled) then
+                Res.fail(ErrorCode.AdminSelfDemote)
+              // メールアドレスはパスワードの再設定の宛先になるので、トークンからは変えさせない
+              else if (next.email != u.email || next.emailVerified != u.emailVerified) && !p.via.isInstanceOf[Via.Web]
+              then
+                Res.fail(ErrorCode.EmailChangeUiOnly)
+              else
+                dir.users.save(next).flatMap {
+                  case Left(e) => Res.fail(e)
+                  case Right(saved) =>
+                    val becameDisabled = saved.disabled && !u.disabled
+                    r.groupIds.traverse_(gs =>
+                      dir.groups.staticGroupIds(id).flatMap { cur =>
+                        (gs.filterNot(cur.contains).traverse_(g => dir.groups.addMember(g, id)) *>
+                          cur.filterNot(gs.contains).traverse_(g => dir.groups.removeMember(g, id)))
+                      }
+                    ) *>
+                      IO.whenA(becameDisabled)(revokeAll(saved)) *> dir.recomputeUser(saved) *>
+                      audit.byPrincipal(
+                        c,
+                        p,
+                        if becameDisabled then "user.disable" else "user.update",
+                        audit.userTarget(saved),
+                        detail = Json.obj("changes" -> diff(u, saved))
+                      ) *> userDto(saved).map(Right(_))
+                }
+          }
+      }
 
   private def diff(a: User, b: User): Json = {
     val pairs = List(
@@ -1154,7 +1178,8 @@ final class AdminRoutes(dir: Directory,
               c.refreshTokenTtl,
               c.includeGroups,
               c.backchannelLogoutUri,
-              c.includeAppNames
+              c.includeAppNames,
+              c.magicLinks
             )
           ),
           s.map(x =>
@@ -1272,7 +1297,9 @@ final class AdminRoutes(dir: Directory,
       o.refreshTokenTtl,
       o.includeGroups,
       o.backchannelLogoutUri.filter(_.nonEmpty),
-      o.includeAppNames
+      o.includeAppNames,
+      // 公開クライアントには許さない（シークレットがなく、誰でも発行を求められてしまう）
+      o.magicLinks && o.confidential
     )
 
   private def samlCfg(id: UUID, s: SamlDto): SamlConfig =

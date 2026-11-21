@@ -117,6 +117,7 @@ object Main extends IOApp.Simple {
         auth = new SessionAuth(sessions, factors, dir, policies, cfg.api)
         login = new LoginService(dir, sessions, factors, tokens, apps, fedStore, policies, audit, mail, box, cfg.api)
         fed = new FederationService(fedStore, dir, audit, box, http, lock, cfg.api)
+        magic = new MagicLinkService(dir, login, sessions, factors, tokens, apps, audit, mail, cfg.api)
         gate = new AuthGate(auth, apps, tokens, dir, policies, audit)
         claims = new Claims(dir, apps)
         oidc = new OidcRoutes(apps, tokens, devices, sessions, dir, keys, claims, gate, auth, audit, http, cfg.api)
@@ -124,6 +125,7 @@ object Main extends IOApp.Simple {
         saml = new SamlRoutes(apps, tokens, sessions, dir, keys, gate, auth, audit, cfg.api)
         loginR = new LoginRoutes(
           login,
+          magic,
           fed,
           fedStore,
           auth,
@@ -197,7 +199,9 @@ object Main extends IOApp.Simple {
           )(lock.exclusive("dynamic-groups", 50.minutes)(dir.recomputeAll))
         )
         _ <- loops.traverse_(_.background)
-        rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+> me.routes <+> adminR.routes <+> domainR.routes <+>
+        rest = health(xa, cfg.api.nodeId) <+> loginR.routes <+>
+          new MagicLinkRoutes(magic, dir, apps, auth, cfg.api).routes <+> me.routes <+> adminR.routes <+>
+          domainR.routes <+>
           oidc.routes <+> device.routes <+>
           oauth.routes <+> saml.routes <+>
           resume.routes <+> scim.routes <+> RumRoutes.routes <+> new PushRoutes(pushStore, push, auth).routes
@@ -327,7 +331,12 @@ object Main extends IOApp.Simple {
       SecurityHeaders.Policy(
         hsts = SecurityHeaders.hsts(https, "max-age=31536000; includeSubDomains"),
         csp = Some(pageCsp(req)),
-        cspHtmlOnly = true
+        cspHtmlOnly = true,
+        // マジックリンク・再設定などトークンを URL に載せて開く画面は、Referer を送らない（画面は開いてすぐ URL から消す）
+        referrer = Some(
+          if sruru.shared.Pages.hasSecretInUrl(req.pathInfo.renderString) then "no-referrer"
+          else "strict-origin-when-cross-origin"
+        )
       )
     )(app)
 

@@ -110,6 +110,19 @@ final class Directory(val users: UserStore,
       }
     }
 
+  /**
+   * パスワードを照合する（Argon2id は重いので blocking のスレッドで）. 合っていて、保存された値が古い形式（移行した bcrypt・
+   * パラメータの違う Argon2id）なら、その場で今の Argon2id に置き換える. (合っているか, 置き換えたか).
+   */
+  def verifyPassword(u: User, pw: String): IO[(Boolean, Boolean)] =
+    u.passwordHash.fold(IO.pure((false, false))) { stored =>
+      IO.blocking(Passwords.verify(pw, stored)).flatMap {
+        case true if Passwords.needsRehash(stored) =>
+          Directory.hash(pw).flatMap(h => users.rehashPassword(u.id, stored, h)).map(r => (true, r))
+        case ok => IO.pure((ok, false))
+      }
+    }
+
   /** パスワードを設定する（条件を確かめ、ほかのログインと発行済みのトークンを無効にする）. keepLogin は残すログイン. */
   def setPassword(u: User, pw: String, mustChange: Boolean, keepLogin: Option[UUID]): IO[Either[String, Unit]] =
     checkPassword(Some(u), pw).flatMap {

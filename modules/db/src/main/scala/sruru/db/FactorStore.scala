@@ -10,6 +10,7 @@ import cats.syntax.all.*
 import doobie.*
 import doobie.implicits.*
 import doobie.postgres.implicits.*
+import io.circe.Json
 
 import java.time.Instant
 import java.util.UUID
@@ -21,12 +22,15 @@ final case class TotpDevice(id: UUID,
                             confirmed: Boolean,
                             lastUsedStep: Long,
                             createdAt: Instant)
+
+/** メールのコード・リンク. data はマジックリンクの付帯の情報（発行した人・ドメイン・戻り先）. ほかの目的では空. */
 final case class EmailToken(id: UUID,
                             userId: UUID,
                             purpose: String,
                             tokenHash: Array[Byte],
                             attempts: Int,
-                            expiresAt: Instant)
+                            expiresAt: Instant,
+                            data: Json = Json.obj())
 
 /** API トークン. oauthClient は OAuth の連携で発行したもの（OAUTH_CLIENTS の id）. */
 final case class ApiToken(id: UUID,
@@ -49,6 +53,7 @@ final case class CertAuthority(id: UUID, name: String, pem: String, enabled: Boo
 
 /** 多要素認証・メールのコード・API トークン・証明書・ログインの試行の制限. */
 final class FactorStore(xa: Transactor[IO]) extends TxStore(xa) {
+  import Codecs.given
 
   // ------------------------------------------------------------------ TOTP
 
@@ -111,23 +116,26 @@ final class FactorStore(xa: Transactor[IO]) extends TxStore(xa) {
   // ------------------------------------------------------------------ メールのコード・リンク
 
   /** 同じ目的の古いものは消して新しく作る. */
-  def createEmailToken(userId: UUID, purpose: String, hash: Array[Byte], expiresAt: Instant): IO[UUID] = {
+  def createEmailToken(userId: UUID,
+                       purpose: String,
+                       hash: Array[Byte],
+                       expiresAt: Instant,
+                       data: Json = Json.obj()): IO[UUID] = {
     val id = UUID.randomUUID()
     tx(sql"delete from email_tokens where user_id = $userId and purpose = $purpose".update.run *>
-      sql"insert into email_tokens (id, user_id, purpose, token_hash, expires_at) values ($id, $userId, $purpose, $hash, $expiresAt)".update.run).as(
-      id
-    )
+      sql"""insert into email_tokens (id, user_id, purpose, token_hash, expires_at, data)
+            values ($id, $userId, $purpose, $hash, $expiresAt, $data)""".update.run).as(id)
   }
 
   def emailToken(userId: UUID, purpose: String, now: Instant): IO[Option[EmailToken]] = tx(
-    sql"""select id, user_id, purpose, token_hash, attempts, expires_at from email_tokens
+    sql"""select id, user_id, purpose, token_hash, attempts, expires_at, data from email_tokens
           where user_id = $userId and purpose = $purpose and consumed_at is null and expires_at > $now""".query[
       EmailToken
     ].option
   )
 
   def emailTokenByHash(purpose: String, hash: Array[Byte], now: Instant): IO[Option[EmailToken]] = tx(
-    sql"""select id, user_id, purpose, token_hash, attempts, expires_at from email_tokens
+    sql"""select id, user_id, purpose, token_hash, attempts, expires_at, data from email_tokens
           where purpose = $purpose and token_hash = $hash and consumed_at is null and expires_at > $now""".query[
       EmailToken
     ].option

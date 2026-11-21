@@ -20,6 +20,12 @@ object ApiCatalog {
     Endpoint("POST", "/api/login/register", "アカウントを作る（設定で許可されているとき） RegisterReq → FlowDto"),
     Endpoint("POST", "/api/login/forgot", "パスワードの再設定のメールを送る ForgotReq → 204"),
     Endpoint("POST", "/api/login/reset", "パスワードを再設定する ResetReq → 204"),
+    Endpoint("POST", "/api/login/magic", "マジックリンクを使う（確認の画面のボタンから） MagicLoginReq → FlowDto"),
+    Endpoint(
+      "POST",
+      "/api/magic-links",
+      "サービスがマジックリンクを発行する（Authorization: Basic client_id:client_secret. 許可したクライアントだけ） MagicLinkReq → MagicLinkDto"
+    ),
     Endpoint("GET", "/auth/cert?flow={flowId}", "クライアント証明書でログイン（ブラウザで開く）"),
     Endpoint("GET", "/auth/fed/{slug}/start?flow={flowId}", "外部の IdP でログイン（ブラウザで開く）"),
     Endpoint("GET", "/api/auth-requests/{requestId}", "認可の要求（アプリ名・スコープ） → AuthRequestDto"),
@@ -64,9 +70,13 @@ object ApiCatalog {
       "/api/admin/users?q=&status=active|disabled|locked|service|admin&groupId=&source=&limit=&offset=",
       "ユーザーの一覧 → UserListDto"
     ),
-    Endpoint("POST", "/api/admin/users", "ユーザーを作る UserReq → UserDto"),
+    Endpoint(
+      "POST",
+      "/api/admin/users",
+      "ユーザーを作る UserReq → UserDto（移行: passwordHash に bcrypt（$2a$ など）・Argon2id のハッシュを渡せる. ログインに成功したら Argon2id に置き換わる）"
+    ),
     Endpoint("GET", "/api/admin/users/{id}", "ユーザーの詳細 → UserDetailDto"),
-    Endpoint("PUT", "/api/admin/users/{id}", "ユーザーを変える UserReq（password は無視） → UserDto"),
+    Endpoint("PUT", "/api/admin/users/{id}", "ユーザーを変える UserReq（password は無視. passwordHash は受け付けない） → UserDto"),
     Endpoint("DELETE", "/api/admin/users/{id}", "ユーザーを削除"),
     Endpoint(
       "POST",
@@ -74,6 +84,7 @@ object ApiCatalog {
       "パスワードを設定・リセット SetPasswordReq（password なしなら生成） → GeneratedPasswordDto"
     ),
     Endpoint("POST", "/api/admin/users/{id}/unlock", "ロックを解除"),
+    Endpoint("POST", "/api/admin/users/{id}/magic-link", "ログインのリンクを登録されているアドレスへメールで送る → MagicLinkDto"),
     Endpoint("POST", "/api/admin/users/{id}/reset-mfa", "多要素認証の登録を消す"),
     Endpoint("POST", "/api/admin/users/{id}/logout", "すべての端末からログアウトさせ、トークンを失効"),
     Endpoint("DELETE", "/api/admin/users/{id}/sessions/{sessionId}", "1つのログインを終わらせる"),
