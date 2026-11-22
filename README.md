@@ -71,7 +71,7 @@ sruru は、組織のための認証基盤（IdP）です。OpenID Connect・OAu
 
 ## 開発
 
-必要なもの: JDK 21、sbt、Node.js、Docker。
+必要なもの: JDK 25、sbt、Node.js、Docker。
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --wait   # PostgreSQL (:54360)、Mailpit (SMTP :1031、画面 :8031)
