@@ -1,7 +1,7 @@
 package sruru.shared
 
 import io.circe.*
-import io.circe.derivation.{Configuration, ConfiguredCodec}
+import io.circe.derivation.ConfiguredCodec
 
 // ドメイン（sruru にアクセスするホスト名）ごとのポリシーの上書き。None の項目は全体のポリシーのまま。
 // グループの上書き（より厳しい方）と違い、指定した項目は全体の値を「置き換える」（緩めることもできる）。

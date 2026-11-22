@@ -67,7 +67,7 @@ sruru は、組織のための認証基盤（IdP）です。OpenID Connect・OAu
 | `frontend/` | Vite。Scala.js の出力をまとめてビルドする |
 | `deploy/` | Docker（試験用の3ノード構成）と VM 構築用の設定のひな形 |
 
-技術: Scala 3.3 LTS、Cats Effect 3、http4s 1.0（マイルストーン版）、doobie、Flyway、PostgreSQL 17、BouncyCastle、Scala.js + Scalactive。
+技術: Scala 3.9 LTS、Cats Effect 3、http4s 1.0（マイルストーン版）、doobie、Flyway、PostgreSQL 17、BouncyCastle、Scala.js + Scalactive。
 
 ## 開発
 

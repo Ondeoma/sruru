@@ -23,7 +23,7 @@ object Main {
     // PWA（ホーム画面に追加・オフラインで開く・プッシュ通知）
     Observe.start(enabled = !sruru.shared.Pages.isPublic(dom.window.location.pathname), deferUntilUser = true)
     Pwa.register()
-    App()(dom.document.body, AddMethod.appendS(IdSelector("app"))).init()
+    App()(using dom.document.body, AddMethod.appendS(IdSelector("app"))).init()
   }
 
 }

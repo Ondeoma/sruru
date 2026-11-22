@@ -1,7 +1,7 @@
 package sruru.shared
 
 import io.circe.*
-import io.circe.derivation.{Configuration, ConfiguredCodec}
+import io.circe.derivation.ConfiguredCodec
 
 // グループごとのポリシーの上書き。None の項目は全体のポリシーのまま。
 // セキュリティの項目は、全体と所属するすべてのグループのうち「より厳しい方」にまとめる（優先度は関係しない）。
